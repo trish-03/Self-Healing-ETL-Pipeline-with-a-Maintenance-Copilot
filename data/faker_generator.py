@@ -8,7 +8,7 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import the database connection utility and the date module
-from etl.db_connection import get_connection
+from connection.db_connection import get_connection
 from datetime import date
 
 # Initialize the Faker library to generate realistic mock data
