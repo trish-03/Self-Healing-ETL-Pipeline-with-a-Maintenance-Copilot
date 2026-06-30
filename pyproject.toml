@@ -6,6 +6,8 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "dotenv>=0.9.9",
+    "faker>=40.23.0",
+    "pandas>=3.0.3",
     "psycopg2>=2.9.12",
     "pyspark>=4.1.2",
 ]

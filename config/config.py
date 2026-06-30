@@ -16,6 +16,11 @@ WAREHOUSE_PATH = "/tmp/warehouse"
 CATALOG_NAME = "local"
 
 # Properties passed to Spark's JDBC reader
+
+# JDBC connection string format required by the Postgres JDBC driver for Spark
+JDBC_URL = f"jdbc:postgresql://{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
+
+
 # currentSchema tells the JDBC driver to look in the raw schema by default
 JDBC_PROPS = {
     "user": DB_CONFIG["user"],
