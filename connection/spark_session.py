@@ -6,7 +6,7 @@ os.environ["PYSPARK_PYTHON"] = sys.executable
 os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable
 
 from pyspark.sql import SparkSession
-from config import SPARK_PACKAGES, WAREHOUSE_PATH, CATALOG_NAME
+from config.config import SPARK_PACKAGES, WAREHOUSE_PATH, CATALOG_NAME
 
 def get_spark(app_name="LakehouseETL"):
     # Return an existing Spark session if one is already running
