@@ -85,6 +85,7 @@ def generate_incremental_batch(conn, customer_ids, sku_codes, batch_date, num_up
     updated_count = 0
     new_orders_count = 0
     new_customers_count = 0
+    new_items_count = 0 
 
     # dim_date must already contain batch_date before any order references it
     ensure_date_exists(conn, batch_date.date())
@@ -126,6 +127,29 @@ def generate_incremental_batch(conn, customer_ids, sku_codes, batch_date, num_up
 
         new_orders_count += 1
 
+
+        # Generate 1-4 line items per new order, matching the same pattern
+        # as faker_generator.py's generate_order_items(): each item picks its
+        # own sku_code independently of the order's own sku_code, and prices
+        # are computed cleanly here (no corrupted line_total -- that stays
+        # confined to historical data until the Saturday medallion refactor)
+        num_items = random.randint(1, 4)
+        for _ in range(num_items):
+            item_id = "ITEM-" + os.urandom(4).hex().upper()
+            item_sku_code = random.choice(sku_codes)
+            item_quantity = random.randint(1, 5)
+            unit_price = round(random.uniform(5.0, 500.0), 2)
+            discount = round(random.uniform(0.0, 20.0), 2)
+            line_total = round((unit_price * item_quantity) - discount, 2)
+
+            cur.execute("""
+                INSERT INTO raw.order_items (item_id, order_id, sku_code, quantity, unit_price, discount, line_total, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (item_id) DO NOTHING
+            """, (item_id, order_id, item_sku_code, item_quantity, unit_price, discount, line_total, created_at))
+
+            new_items_count += 1
+
     conn.commit()
     cur.close()
 
@@ -133,10 +157,13 @@ def generate_incremental_batch(conn, customer_ids, sku_codes, batch_date, num_up
         "updated_orders": updated_count,
         "new_orders": new_orders_count,
         "new_customers": new_customers_count,
+        "new_items": new_items_count,   # add this
         "batch_date": batch_date,
     }
     print(f"Batch at {batch_date.date()}: {updated_count} orders advanced, "
-          f"{new_orders_count} new orders, {new_customers_count} new customers.")
+          f"{new_orders_count} new orders, {new_customers_count} new customers, "
+          f"{new_items_count} new items.")
+
     return summary
 
 
