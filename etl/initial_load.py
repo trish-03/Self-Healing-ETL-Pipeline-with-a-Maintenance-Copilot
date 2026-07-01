@@ -43,23 +43,30 @@ dim_customer.writeTo(f"{CATALOG_NAME}.warehouse.dim_customer").createOrReplace()
 dim_product.writeTo(f"{CATALOG_NAME}.warehouse.dim_product").createOrReplace()
 dim_date.writeTo(f"{CATALOG_NAME}.warehouse.dim_date").createOrReplace()
 
-# Write fact_orders, partitioned by month of created_at
+# Write fact_orders, partitioned by month of created_at, configured for Merge-on-Read (MoR)
 # months() and col() build a Spark Column expression, not a SQL string
 # This is the Iceberg-native way to define a partition transform
 orders.writeTo(f"{CATALOG_NAME}.warehouse.fact_orders") \
-    .partitionedBy(months(col("created_at"))) \
+    .tableProperty("write.merge.mode", "merge-on-read") \
+    .tableProperty("write.update.mode", "merge-on-read") \
+    .tableProperty("write.delete.mode", "merge-on-read") \
     .createOrReplace()
+    #.partitionedBy(months(col("created_at"))) \
 
-# fact_order_items has no partitioning defined, written as-is
-order_items.writeTo(f"{CATALOG_NAME}.warehouse.fact_order_items").createOrReplace()
+# fact_order_items has no partitioning defined, written as-is, configured for Merge-on-Read (MoR)
+order_items.writeTo(f"{CATALOG_NAME}.warehouse.fact_order_items") \
+    .tableProperty("write.merge.mode", "merge-on-read") \
+    .tableProperty("write.update.mode", "merge-on-read") \
+    .tableProperty("write.delete.mode", "merge-on-read") \
+    .createOrReplace()
 
 # Print row counts to confirm the load completed correctly
 print("Initial load complete.")
-print(f"  dim_customer     : {dim_customer.count()} rows")
-print(f"  dim_product      : {dim_product.count()} rows")
-print(f"  dim_date         : {dim_date.count()} rows")
-print(f"  fact_orders      : {orders.count()} rows")
-print(f"  fact_order_items : {order_items.count()} rows")
+print(f"   dim_customer     : {dim_customer.count()} rows")
+print(f"   dim_product      : {dim_product.count()} rows")
+print(f"   dim_date         : {dim_date.count()} rows")
+print(f"   fact_orders      : {orders.count()} rows")
+print(f"   fact_order_items : {order_items.count()} rows")
 
 spark.stop()
 
