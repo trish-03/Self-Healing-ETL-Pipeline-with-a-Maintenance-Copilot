@@ -1,5 +1,5 @@
 import os
-from ..connection.db_connection import get_connection
+from connection.db_connection import get_connection
 
 def init_schema():
     conn = get_connection()
