@@ -62,3 +62,11 @@ print(f"  fact_orders      : {orders.count()} rows")
 print(f"  fact_order_items : {order_items.count()} rows")
 
 spark.stop()
+
+# Reset watermark so the next incremental run starts from DATE_END,
+# not from a stale timestamp left over from a previous pipeline run.
+# Deleting is cleaner than overwriting -- get_watermark() handles the
+# missing-file case by returning DEFAULT_WATERMARK automatically.
+if os.path.exists("watermark.txt"):
+    os.remove("watermark.txt")
+    print("Watermark reset.")
