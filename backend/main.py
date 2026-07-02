@@ -58,22 +58,21 @@ def _is_fragmented(metrics: HealthMetrics) -> bool:
     )
 
 
-@app.post("/api/health", response_model=TableHealthResponse)
-def check_table_health(payload: TableHealthRequest, spark=Depends(get_spark_session)):
+@app.get("/api/health", response_model=TableHealthResponse)
+def check_table_health(table: str, spark=Depends(get_spark_session)): # <-- Expect a plain string 'table'
     """API endpoint backing the check_lakehouse_health MCP tool."""
     try:
-        raw_health = get_table_health(spark, payload.table_name)
+        raw_health = get_table_health(spark, table) # <-- Pass the variable directly
         metrics = _to_health_metrics(raw_health)
         status = "FRAGMENTED" if _is_fragmented(metrics) else "HEALTHY"
 
         return TableHealthResponse(
-            table_name=payload.table_name,
+            table_name=table,
             status=status,
             metrics=metrics
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to query metadata: {str(e)}")
-
 
 @app.post("/api/maintenance", response_model=MaintenanceResponse)
 def execute_table_maintenance(payload: MaintenanceRequest, spark=Depends(get_spark_session)):
