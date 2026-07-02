@@ -58,6 +58,8 @@ order_items.writeTo(f"{CATALOG_NAME}.warehouse.fact_order_items") \
     .tableProperty("write.merge.mode", "merge-on-read") \
     .tableProperty("write.update.mode", "merge-on-read") \
     .tableProperty("write.delete.mode", "merge-on-read") \
+    .tableProperty("write.metadata.delete-after-commit.enabled", "true") \
+    .tableProperty("write.metadata.previous-versions-max", "10") \
     .createOrReplace()
 
 # Print row counts to confirm the load completed correctly

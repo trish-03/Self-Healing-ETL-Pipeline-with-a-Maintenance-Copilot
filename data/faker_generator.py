@@ -15,9 +15,9 @@ from datetime import date, datetime
 fake = Faker()
 
 # Define global constants for data generation volume and date ranges
-NUM_CUSTOMERS = 200
-NUM_PRODUCTS = 50
-NUM_ORDERS = 1200
+NUM_CUSTOMERS = 500
+NUM_PRODUCTS = 100
+NUM_ORDERS = 10000
 DATE_START = "2023-01-01"
 DATE_END = "2024-12-31"
 
