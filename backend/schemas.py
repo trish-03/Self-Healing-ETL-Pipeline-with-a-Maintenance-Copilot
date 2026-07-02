@@ -26,3 +26,11 @@ class MaintenanceResponse(BaseModel):
     files_deleted: int
     before: HealthMetrics
     after: HealthMetrics
+class OrphanRemovalRequest(BaseModel):
+    table_name: str = Field(..., example="fact_orders")
+    confirmed: bool = Field(..., description="Must be explicitly True from the user to execute.")
+
+class OrphanRemovalResponse(BaseModel):
+    executed: bool
+    message: str
+    orphan_file_count: int | None
