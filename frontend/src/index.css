@@ -1,0 +1,33 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background-color: #0b0f17; /* Slate deep background layer */
+  color: #f1f5f9;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  overflow: hidden;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom Denzing branding utility color layers */
+.bg-denzing-green {
+  background-color: #226b4d;
+}
+.hover\:bg-denzing-green-hover:hover {
+  background-color: #2d7a59;
+}
+.text-denzing-green {
+  color: #226b4d;
+}
+.border-denzing-green {
+  border-color: rgba(34, 107, 77, 0.4);
+}
