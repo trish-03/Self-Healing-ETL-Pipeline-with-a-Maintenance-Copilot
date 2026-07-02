@@ -38,6 +38,7 @@ class TableHealthReport:
     # Metadata metrics
     snapshot_count: Optional[int] = None
     manifest_count: Optional[int] = None
+    metadata_json_count: Optional[int] = None
 
     # Cleanup metric
     orphan_file_count: Optional[int] = None
@@ -140,6 +141,35 @@ def physical_file_count(table):
     return len(list(data_path.rglob("*.parquet")))
 
 
+def metadata_json_count(table):
+    """
+    Counts metadata.json files physically present on disk.
+
+    Every commit writes a new metadata.json. By default Iceberg
+    keeps every one (write.metadata.previous-versions-max defaults
+    to 100, and write.metadata.delete-after-commit.enabled defaults
+    to false), so this number only ever grows unless the table
+    property is explicitly turned on. This metric has no
+    corresponding "live" count the way data/delete files do --
+    there's no metadata-table query for it, since it's not part of
+    the current snapshot's content, just accumulated history.
+    """
+
+    table_name = table.split(".")[-1]
+
+    metadata_path = (
+        Path(WAREHOUSE_PATH)
+        / "warehouse"
+        / table_name
+        / "metadata"
+    )
+
+    if not metadata_path.exists():
+        return 0
+
+    return len(list(metadata_path.glob("v*.metadata.json")))
+
+
 def snapshot_count(spark, table):
     """
     Number of snapshots currently retained by Iceberg.
@@ -190,7 +220,8 @@ def orphan_file_count(
     """
     Counts orphan files using Iceberg's dry-run mode.
 
-    No files are deleted.
+    No files are deleted. Actual removal lives in
+    compaction.remove_orphan_files, gated behind confirmation.
 
     Iceberg requires older_than to be at least 24 hours
     to avoid deleting files still in use.
@@ -305,6 +336,12 @@ def get_table_health(spark, table_name: str) -> TableHealthReport:
         lambda: manifest_count(spark, full_table_name)
     )
 
+    report.metadata_json_count = _safe_metric(
+        errors,
+        "metadata_json_count",
+        lambda: metadata_json_count(full_table_name)
+    )
+
     # ---------------- Cleanup ----------------
 
     report.orphan_file_count = _safe_metric(
@@ -364,6 +401,7 @@ def print_report(report: TableHealthReport):
     print("-" * 65)
     print(f"Snapshots            : {report.snapshot_count}")
     print(f"Manifest Files       : {report.manifest_count}")
+    print(f"Metadata JSON Files  : {report.metadata_json_count}")
 
     print("\nCleanup Metrics")
     print("-" * 65)

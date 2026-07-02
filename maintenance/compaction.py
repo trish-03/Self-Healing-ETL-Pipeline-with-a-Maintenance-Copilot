@@ -1,6 +1,6 @@
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -95,6 +95,57 @@ def expire_snapshots(spark, table):
     return result["deleted_data_files_count"]
 
 
+def remove_orphan_files(spark, table, older_than_hours=24, confirmed=False):
+    """
+    Physically deletes orphan files -- files present on disk but not
+    referenced by any live snapshot.
+
+    This is destructive and irreversible. Unlike compact_table,
+    compact_delete_files, and expire_snapshots, this is NOT called
+    automatically inside run_maintenance -- orphan buildup (failed
+    writes, aborted compactions) is a separate failure mode from
+    fragmentation or snapshot bloat, and shouldn't fire just because
+    a table looked unhealthy on the fragmentation check.
+
+    Iceberg hard-enforces a minimum older_than of 24 hours regardless
+    of what's passed, to avoid deleting files still mid-write by a
+    concurrent job.
+
+    Args:
+        confirmed: must be explicitly True to actually delete.
+                   Mirrors the guardrail pattern used elsewhere for
+                   destructive actions (API layer, MCP tool).
+    """
+
+    if not confirmed:
+        return {
+            "executed": False,
+            "message": "Orphan removal requires confirmed=True.",
+            "orphan_file_count": None
+        }
+
+    cutoff = (
+        datetime.now()
+        - timedelta(hours=older_than_hours)
+    ).strftime("%Y-%m-%d %H:%M:%S")
+
+    result = spark.sql(f"""
+        CALL {CATALOG_NAME}.system.remove_orphan_files(
+            table => '{table}',
+            older_than => TIMESTAMP '{cutoff}',
+            dry_run => false
+        )
+    """)
+
+    deleted_count = result.count()
+
+    return {
+        "executed": True,
+        "message": f"{deleted_count} orphan file(s) removed.",
+        "orphan_file_count": deleted_count
+    }
+
+
 # ----------------------------------------------------------------------
 # Maintenance Driver
 # ----------------------------------------------------------------------
@@ -110,6 +161,9 @@ def run_maintenance(spark, table_name):
         3. Always compact/clean delete files.
         4. Always expire snapshots afterwards.
         5. Print before/after reports.
+
+    Orphan removal is deliberately NOT part of this automatic flow --
+    see remove_orphan_files for why. Call it separately when needed.
     """
 
     full_table_name = f"{CATALOG_NAME}.warehouse.{table_name}"
