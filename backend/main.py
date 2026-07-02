@@ -1,11 +1,13 @@
 from fastapi import FastAPI, Depends, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 
 from backend.dependencies import lifespan, get_spark_session
 from backend.schemas import (
     TableHealthRequest, TableHealthResponse, HealthMetrics,
     MaintenanceRequest, MaintenanceResponse
 )
+
+# 🔌 Import the isolated CORS setup from your top-level config package
+from backend.config.cors import setup_cors
 
 # Import your existing functional Data Engineering logic
 from maintenance.health_metrics import get_table_health
@@ -17,14 +19,8 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Enable CORS so your React frontend can reach the endpoints seamlessly
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# 🔌 Initialize the network bridge from your custom config layer
+setup_cors(app)
 
 @app.post("/api/health", response_model=TableHealthResponse)
 def check_table_health(payload: TableHealthRequest, spark=Depends(get_spark_session)):
@@ -46,7 +42,7 @@ def check_table_health(payload: TableHealthRequest, spark=Depends(get_spark_sess
             metrics=HealthMetrics(
                 snapshot_count=raw_health.snapshot_count,
                 live_file_count=live_files,
-                average_file_size_bytes=avg_size  # ✅ Safely cast to Integer
+                average_file_size_bytes=avg_size
             )
         )
     except Exception as e:
@@ -55,7 +51,7 @@ def check_table_health(payload: TableHealthRequest, spark=Depends(get_spark_sess
 @app.post("/api/maintenance", response_model=MaintenanceResponse)
 def execute_table_maintenance(payload: MaintenanceRequest, spark=Depends(get_spark_session)):
     """API endpoint backing the execute_table_maintenance MCP tool with a built-in guardrail."""
-    #  Strict Confirmation Gate Check
+    # Strict Confirmation Gate Check
     if not payload.confirmed:
         raise HTTPException(
             status_code=400, 
@@ -82,10 +78,11 @@ def execute_table_maintenance(payload: MaintenanceRequest, spark=Depends(get_spa
         after_metrics = HealthMetrics(
             snapshot_count=after_raw.snapshot_count,
             live_file_count=after_raw.live_file_count if after_raw.live_file_count is not None else 0,
-            average_file_size_bytes=int(after_raw.average_file_size_bytes) if after_raw.average_file_size_bytes is not None else 0
+            average_file_size_bytes=int(after_raw.average_file_size_bytes) if after_raw.after_raw.average_file_size_bytes is not None else 0
         )
         
         return MaintenanceResponse(
+            # This payload perfectly satisfies what useExecuteMaintenance expects!
             maintenance_executed=True,
             message="Table optimization completed successfully.",
             files_rewritten=rewritten_count,
