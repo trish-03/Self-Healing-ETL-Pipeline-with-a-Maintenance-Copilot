@@ -17,7 +17,7 @@ import {
 
 import { activeTableAtom } from './store/uiState';
 import { useTableHealth } from './hooks/useLakehouseData';
-import CopilotChat from './components/CopilotChat';
+import CopilotChat from './components/copilotChat';
 
 const queryClient = new QueryClient();
 
