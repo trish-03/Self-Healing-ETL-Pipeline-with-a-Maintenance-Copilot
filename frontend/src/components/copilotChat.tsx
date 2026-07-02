@@ -1,35 +1,48 @@
 import React from 'react';
 import { useAtom } from 'jotai';
-import { Send, ShieldAlert, Bot, User } from 'lucide-react';
+import { Send, ShieldAlert, Bot } from 'lucide-react';
 import { chatHistoryAtom, chatInputAtom } from '../store/uiState';
-import { useExecuteMaintenance } from '../hooks/useLakehouseData';
+import { useExecuteMaintenance, useRemoveOrphans } from '../hooks/useLakehouseData';
 
 export default function CopilotChat({ tableName }: { tableName: string }) {
   const [messages, setMessages] = useAtom(chatHistoryAtom);
   const [input, setInput] = useAtom(chatInputAtom);
-  const mutation = useExecuteMaintenance();
+  
+  const maintenanceMutation = useExecuteMaintenance();
+  const orphanMutation = useRemoveOrphans();
 
   const handleSend = () => {
     if (!input.trim()) return;
 
     const userMsg = { id: crypto.randomUUID(), sender: 'user' as const, text: input, timestamp: new Date() };
     let updated = [...messages, userMsg];
+    const cleanInput = input.toLowerCase();
 
-    // Simple pattern matching for local verification before we inject the AI Agent module
-    if (input.toLowerCase().includes('optimize') || input.toLowerCase().includes('compact')) {
+    if (cleanInput.includes('optimize') || cleanInput.includes('compact')) {
       updated.push({
         id: crypto.randomUUID(),
         sender: 'system' as const,
-        text: `Triggering optimization sequence for ${tableName}...`,
+        text: `Triggering layout optimization sequence for ${tableName}...`,
         timestamp: new Date(),
         requiresConfirmation: true,
+        confirmationType: 'optimize',
+        targetTable: tableName
+      });
+    } else if (cleanInput.includes('orphan') || cleanInput.includes('clean')) {
+      updated.push({
+        id: crypto.randomUUID(),
+        sender: 'system' as const,
+        text: `Evaluating unreferenced metadata blocks and dangling orphan files for ${tableName}...`,
+        timestamp: new Date(),
+        requiresConfirmation: true,
+        confirmationType: 'orphans',
         targetTable: tableName
       });
     } else {
       updated.push({
         id: crypto.randomUUID(),
         sender: 'assistant' as const,
-        text: "I understand. Once the AI module is linked, I can execute full natural language inquiries against your Iceberg catalog.",
+        text: "Command unmapped. You can say 'optimize table' to invoke position-delete restructuring, or 'clean orphans' to clear unreferenced staging artifacts.",
         timestamp: new Date()
       });
     }
@@ -38,20 +51,30 @@ export default function CopilotChat({ tableName }: { tableName: string }) {
     setInput('');
   };
 
-  const executeCompaction = async (target: string) => {
+  const handleConfirmAction = async (target: string, type: 'optimize' | 'orphans') => {
     try {
-      const res = await mutation.mutateAsync({ tableName: target, confirmed: true });
-      setMessages(prev => [...prev, {
-        id: crypto.randomUUID(),
-        sender: 'assistant',
-        text: ` Storage compaction successful!\n• Files compacted: ${res.files_rewritten}\n• Snapshots cleared: ${res.files_deleted}\n• File layout updated from ${res.before.live_file_count} small chunks to ${res.after.live_file_count} balanced parquet blocks.`,
-        timestamp: new Date()
-      }]);
+      if (type === 'optimize') {
+        const res = await maintenanceMutation.mutateAsync({ tableName: target, confirmed: true });
+        setMessages(prev => [...prev, {
+          id: crypto.randomUUID(),
+          sender: 'assistant',
+          text: `✨ Compaction Engine Finished!\n• Data Files Compacted: ${res.files_rewritten}\n• Position Deletes Collapsed: ${res.deletes_rewritten}\n• Snapshots Purged: ${res.files_deleted}\n• Data layout updated from ${res.before.live_file_count} chunks down to ${res.after.live_file_count} optimized Parquet blocks.`,
+          timestamp: new Date()
+        }]);
+      } else {
+        const res = await orphanMutation.mutateAsync({ tableName: target, confirmed: true });
+        setMessages(prev => [...prev, {
+          id: crypto.randomUUID(),
+          sender: 'assistant',
+          text: `🛡️ Orphan Eviction Success!\n• Extraneous Files Removed: ${res.orphans_removed}\n• Leakage Volume Recovered: ${(res.bytes_freed / 1024).toFixed(2)} KB\n• State Status: ${res.status}`,
+          timestamp: new Date()
+        }]);
+      }
     } catch (err: any) {
       setMessages(prev => [...prev, {
         id: crypto.randomUUID(),
         sender: 'assistant',
-        text: ` Execution Failed: ${err.response?.data?.detail || err.message}`,
+        text: `🚨 Execution Aborted: ${err.response?.data?.detail || err.message}`,
         timestamp: new Date()
       }]);
     }
@@ -73,16 +96,17 @@ export default function CopilotChat({ tableName }: { tableName: string }) {
                   <div className="p-3 bg-slate-950 border border-amber-500/30 rounded-lg space-y-2 mt-2">
                     <div className="flex items-center gap-1.5 text-amber-400 font-semibold">
                       <ShieldAlert size={14} />
-                      <span>Authorization Gate Triggered</span>
+                      <span>Security Guardrail Verification</span>
                     </div>
-                    <p className="text-[11px] text-slate-400">Confirm mutating storage layout for <code>{msg.targetTable}</code>?</p>
-                    // Inside your CopilotChat component button returns...
+                    <p className="text-[11px] text-slate-400">
+                      Authorize runtime transaction execution against <code>{msg.targetTable}</code>?
+                    </p>
                     <button
-                        onClick={() => executeCompaction(msg.targetTable!)}
-                        disabled={mutation.isPending}
-                        className="w-full bg-denzing-green hover:bg-denzing-green-hover disabled:opacity-50 text-white font-bold py-1.5 px-3 rounded text-[10px] tracking-wide transition uppercase shadow-sm"
+                      onClick={() => handleConfirmAction(msg.targetTable!, msg.confirmationType!)}
+                      disabled={maintenanceMutation.isPending || orphanMutation.isPending}
+                      className="w-full bg-[#226b4d] hover:bg-[#2d7a59] disabled:opacity-50 text-white font-bold py-1.5 px-3 rounded text-[10px] tracking-wide transition uppercase shadow-sm"
                     >
-                        {mutation.isPending ? "Invoking Spark Session..." : "Authorize Layout Compaction"}
+                      {maintenanceMutation.isPending || orphanMutation.isPending ? "Invoking Spark Session..." : `Confirm ${msg.confirmationType}`}
                     </button>
                   </div>
                 )}
@@ -98,14 +122,11 @@ export default function CopilotChat({ tableName }: { tableName: string }) {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-          placeholder="Type 'optimize'..."
+          placeholder="Ask copilot to 'optimize table' or 'clean orphans'..."
           className="flex-1 bg-slate-950 border border-slate-800 rounded-lg text-xs px-3 py-2 text-slate-100 focus:outline-none focus:border-indigo-500 transition"
         />
-        <button 
-            onClick={handleSend} 
-            className="bg-denzing-green hover:bg-denzing-green-hover p-2.5 rounded-lg text-white transition shadow"
-            >
-            <Send size={14} />
+        <button onClick={handleSend} className="bg-[#226b4d] hover:bg-[#2d7a59] p-2.5 rounded-lg text-white transition shadow">
+          <Send size={14} />
         </button>
       </div>
     </div>
