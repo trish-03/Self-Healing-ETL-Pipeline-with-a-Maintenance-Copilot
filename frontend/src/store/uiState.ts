@@ -1,26 +1,23 @@
 import { atom } from 'jotai';
 
-export interface ChatMessage {
+export interface Message {
   id: string;
   sender: 'user' | 'assistant' | 'system';
   text: string;
   timestamp: Date;
   requiresConfirmation?: boolean;
+  confirmationType?: 'optimize' | 'orphans';
   targetTable?: string;
 }
 
-// Global active table selector across dashboard and chat
 export const activeTableAtom = atom<string>('fact_orders');
-
-// Chat messages history state
-export const chatHistoryAtom = atom<ChatMessage[]>([
+export const chatInputAtom = atom<string>('');
+export const chatHistoryAtom = atom<Message[]>([
   {
-    id: 'welcome',
+    id: 'initial-system',
     sender: 'assistant',
-    text: "Hello! I am your Maintenance Copilot. Ask me about your table health, or type 'optimize table' to run maintenance.",
-    timestamp: new Date(),
-  },
+    text: 'Maintenance Copilot active. Ready to analyze MoR layout profiles or scan for orphan metadata.',
+    timestamp: new Date()
+  }
 ]);
 
-// Text input buffer state
-export const chatInputAtom = atom<string>('');

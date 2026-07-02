@@ -1,57 +1,76 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 
-const API_BASE = 'http://127.0.0.1:8000/api';
+const API_BASE = 'http://localhost:8000/api'; // Adjust to your FastAPI port
 
-export interface HealthMetrics {
+export interface TableMetrics {
   snapshot_count: number;
   live_file_count: number;
+  delete_file_count: number;
+  metadata_json_count: number;
   average_file_size_bytes: number;
+  total_size_bytes: number;
 }
 
 export interface TableHealthResponse {
   table_name: string;
-  status: 'HEALTHY' | 'FRAGMENTED';
-  metrics: HealthMetrics;
+  status: 'HEALTHY' | 'FRAGMENTED' | 'DEGRADED';
+  metrics: TableMetrics;
 }
 
 export interface MaintenanceResponse {
-  maintenance_executed: boolean;
-  message: string;
+  table_name: string;
   files_rewritten: number;
+  deletes_rewritten: number;
   files_deleted: number;
-  before: HealthMetrics;
-  after: HealthMetrics;
+  before: TableMetrics;
+  after: TableMetrics;
 }
 
-// Telemetry fetching hook
+export interface OrphanRemovalResponse {
+  table_name: string;
+  orphans_removed: number;
+  bytes_freed: number;
+  status: string;
+}
+
+// Fetch point-in-time health metrics
 export function useTableHealth(tableName: string) {
   return useQuery<TableHealthResponse>({
     queryKey: ['tableHealth', tableName],
     queryFn: async () => {
-      const { data } = await axios.post(`${API_BASE}/health`, { table_name: tableName });
+      // Passes ?table=fact_orders via query string parameters
+      const { data } = await axios.get(`${API_BASE}/health`, { params: { table: tableName } });
       return data;
     },
-    refetchInterval: 5000, // Pulls updates every 5 seconds so charts respond instantly to maintenance
+    refetchInterval: 30000 
   });
 }
 
-// Spark mutation engine hook
+// Invoke optimize / table compaction
 export function useExecuteMaintenance() {
   const queryClient = useQueryClient();
-
   return useMutation<MaintenanceResponse, Error, { tableName: string; confirmed: boolean }>({
     mutationFn: async ({ tableName, confirmed }) => {
-      const { data } = await axios.post(`${API_BASE}/maintenance`, {
-        table_name: tableName,
-        confirmed,
-      });
+      const { data } = await axios.post(`${API_BASE}/maintenance`, { table: tableName, confirmed });
       return data;
     },
-    // We grab the second argument 'variables' which holds the parameters sent to the mutation
-    onSuccess: (_data, variables) => {
-      // Invalidate query using the tableName passed into the mutation call
-      queryClient.invalidateQueries({ queryKey: ['tableHealth', variables.tableName] });
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['tableHealth', data.table_name] });
+    }
+  });
+}
+
+// Invoke orphan removal endpoint
+export function useRemoveOrphans() {
+  const queryClient = useQueryClient();
+  return useMutation<OrphanRemovalResponse, Error, { tableName: string; confirmed: boolean }>({
+    mutationFn: async ({ tableName, confirmed }) => {
+      const { data } = await axios.post(`${API_BASE}/orphans`, { table: tableName, confirmed });
+      return data;
     },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['tableHealth', data.table_name] });
+    }
   });
 }
