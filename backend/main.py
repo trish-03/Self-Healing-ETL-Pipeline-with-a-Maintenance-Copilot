@@ -9,7 +9,7 @@ from backend.schemas import (
 
 # Import your existing functional Data Engineering logic
 from maintenance.health_metrics import get_table_health
-from maintenance.compaction_script import compact_table, expire_snapshots, CATALOG_NAME
+from maintenance.compaction import compact_table, expire_snapshots, CATALOG_NAME
 
 app = FastAPI(
     title="Lakehouse Maintenance Copilot Backend",
@@ -30,15 +30,14 @@ app.add_middleware(
 def check_table_health(payload: TableHealthRequest, spark=Depends(get_spark_session)):
     """API endpoint backing the get_lakehouse_health MCP tool."""
     try:
-        # 1. Fetch raw table health via your DE script
         raw_health = get_table_health(spark, payload.table_name)
         
-        # 2. Re-apply your structural thresholds
-        is_fragmented = (
-            raw_health.live_file_count is not None 
-            and raw_health.live_file_count > 1
-            and raw_health.average_file_size_bytes < (256 * 1024)
-        )
+        # Ensure values are valid integers before evaluation
+        live_files = raw_health.live_file_count if raw_health.live_file_count is not None else 0
+        avg_size = int(raw_health.average_file_size_bytes) if raw_health.average_file_size_bytes is not None else 0
+        
+        # Re-apply your structural thresholds
+        is_fragmented = (live_files > 1 and avg_size < (256 * 1024))
         status = "FRAGMENTED" if is_fragmented else "HEALTHY"
         
         return TableHealthResponse(
@@ -46,13 +45,12 @@ def check_table_health(payload: TableHealthRequest, spark=Depends(get_spark_sess
             status=status,
             metrics=HealthMetrics(
                 snapshot_count=raw_health.snapshot_count,
-                live_file_count=raw_health.live_file_count,
-                average_file_size_bytes=raw_health.average_file_size_bytes
+                live_file_count=live_files,
+                average_file_size_bytes=avg_size  # ✅ Safely cast to Integer
             )
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to query metadata: {str(e)}")
-
 
 @app.post("/api/maintenance", response_model=MaintenanceResponse)
 def execute_table_maintenance(payload: MaintenanceRequest, spark=Depends(get_spark_session)):
@@ -66,13 +64,13 @@ def execute_table_maintenance(payload: MaintenanceRequest, spark=Depends(get_spa
         
     full_table_name = f"{CATALOG_NAME}.warehouse.{payload.table_name}"
     
-    try:
+    try:       
         # 1. Capture 'Before' Metrics
         before_raw = get_table_health(spark, payload.table_name)
         before_metrics = HealthMetrics(
             snapshot_count=before_raw.snapshot_count,
-            live_file_count=before_raw.live_file_count,
-            average_file_size_bytes=before_raw.average_file_size_bytes
+            live_file_count=before_raw.live_file_count if before_raw.live_file_count is not None else 0,
+            average_file_size_bytes=int(before_raw.average_file_size_bytes) if before_raw.average_file_size_bytes is not None else 0
         )
         
         # 2. Run Spark Mutations
@@ -83,8 +81,8 @@ def execute_table_maintenance(payload: MaintenanceRequest, spark=Depends(get_spa
         after_raw = get_table_health(spark, payload.table_name)
         after_metrics = HealthMetrics(
             snapshot_count=after_raw.snapshot_count,
-            live_file_count=after_raw.live_file_count,
-            average_file_size_bytes=after_raw.average_file_size_bytes
+            live_file_count=after_raw.live_file_count if after_raw.live_file_count is not None else 0,
+            average_file_size_bytes=int(after_raw.average_file_size_bytes) if after_raw.average_file_size_bytes is not None else 0
         )
         
         return MaintenanceResponse(
