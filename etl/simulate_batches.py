@@ -11,9 +11,9 @@ from data.incremental_fixture import generate_incremental_batch
 from etl.incremental_load import run_incremental_load
 
 # --- Simulation constants -- adjust these to tune the run ---
-NUM_BATCHES = 50
-NUM_UPDATES_PER_BATCH = 6   # existing orders advanced per batch
-NUM_NEW_ORDERS_PER_BATCH = 3  # new orders inserted per batch
+NUM_BATCHES = 70
+NUM_UPDATES_PER_BATCH = 10   # existing orders advanced per batch
+NUM_NEW_ORDERS_PER_BATCH = 5  # new orders inserted per batch
 
 # Probability that the batch_date advances by one day vs staying the same.
 # 80% of the time a day passes; 20% of the time two batches land on the same day,
