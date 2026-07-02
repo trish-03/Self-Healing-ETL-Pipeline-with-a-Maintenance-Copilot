@@ -20,7 +20,7 @@ from maintenance.health_metrics import (
 FILE_COUNT_THRESHOLD = 1
 
 # Files smaller than this are considered "small files".
-AVG_FILE_SIZE_THRESHOLD = 256 * 1024      # 256 KB
+AVG_FILE_SIZE_THRESHOLD = 1024 * 1024      # 1 MB
 
 
 # ----------------------------------------------------------------------
@@ -32,8 +32,10 @@ def compact_table(spark, table):
     Rewrites small data files into larger ones.
 
     This reduces query overhead but does not delete
-    obsolete parquet files. Snapshot expiration is
-    responsible for reclaiming disk space.
+    obsolete parquet files, and does not touch delete
+    files. Snapshot expiration reclaims disk space for
+    obsolete data files; compact_delete_files reclaims
+    it for obsolete delete files.
     """
 
     result = spark.sql(f"""
@@ -43,6 +45,33 @@ def compact_table(spark, table):
     """).collect()[0]
 
     return result["rewritten_data_files_count"]
+
+
+def compact_delete_files(spark, table):
+    """
+    Compacts position delete files and drops dangling deletes.
+
+    Under Merge-on-Read, every MERGE/UPDATE/DELETE can leave
+    behind a small delete file. rewrite_data_files does not
+    touch these. After a data-file rewrite, delete records that
+    pointed at the now-rewritten data files become "dangling" --
+    still tracked in manifests, but no longer applicable to
+    anything. This procedure compacts remaining delete files and
+    filters out the dangling ones.
+
+    Runs unconditionally, independent of the fragmentation
+    verdict -- a table can show a low live_file_count (e.g. a
+    single data file) while still accumulating delete files,
+    the same reason expire_snapshots must run unconditionally.
+    """
+
+    result = spark.sql(f"""
+        CALL {CATALOG_NAME}.system.rewrite_position_delete_files(
+            table => '{table}'
+        )
+    """).collect()[0]
+
+    return result["rewritten_delete_files_count"]
 
 
 def expire_snapshots(spark, table):
@@ -77,9 +106,10 @@ def run_maintenance(spark, table_name):
     Decision process:
 
         1. Collect table metrics.
-        2. Compact only if fragmentation exists.
-        3. Always expire snapshots afterwards.
-        4. Print before/after reports.
+        2. Compact data files only if fragmentation exists.
+        3. Always compact/clean delete files.
+        4. Always expire snapshots afterwards.
+        5. Print before/after reports.
     """
 
     full_table_name = f"{CATALOG_NAME}.warehouse.{table_name}"
@@ -99,7 +129,7 @@ def run_maintenance(spark, table_name):
     print_report(before)
 
     # ----------------------------------------------------------
-    # Determine fragmentation
+    # Determine fragmentation (data files only)
     # ----------------------------------------------------------
 
     fragmented = (
@@ -110,7 +140,7 @@ def run_maintenance(spark, table_name):
     )
 
     # ----------------------------------------------------------
-    # Compaction
+    # Data file compaction
     # ----------------------------------------------------------
 
     rewritten = 0
@@ -131,7 +161,20 @@ def run_maintenance(spark, table_name):
         print("\nCompaction not required.")
 
     # ----------------------------------------------------------
-    # Snapshot cleanup
+    # Delete file compaction (unconditional)
+    # ----------------------------------------------------------
+
+    print("\nCompacting delete files...")
+
+    rewritten_deletes = compact_delete_files(
+        spark,
+        full_table_name
+    )
+
+    print(f"Delete files rewritten : {rewritten_deletes}")
+
+    # ----------------------------------------------------------
+    # Snapshot cleanup (unconditional)
     # ----------------------------------------------------------
 
     print("\nExpiring snapshots...")
@@ -158,9 +201,10 @@ def run_maintenance(spark, table_name):
 
     print("\nMaintenance Summary")
     print("-" * 70)
-    print(f"Compaction Performed : {'Yes' if fragmented else 'No'}")
-    print(f"Files Rewritten      : {rewritten}")
-    print(f"Files Deleted        : {deleted}")
+    print(f"Compaction Performed   : {'Yes' if fragmented else 'No'}")
+    print(f"Files Rewritten        : {rewritten}")
+    print(f"Delete Files Rewritten : {rewritten_deletes}")
+    print(f"Files Deleted          : {deleted}")
 
 
 # ----------------------------------------------------------------------

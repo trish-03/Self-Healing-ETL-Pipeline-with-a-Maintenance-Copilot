@@ -32,6 +32,9 @@ class TableHealthReport:
     physical_file_count: Optional[int] = None
     average_file_size_bytes: Optional[float] = None
 
+    # Delete file metrics (relevant under Merge-on-Read)
+    delete_file_count: Optional[int] = None
+
     # Metadata metrics
     snapshot_count: Optional[int] = None
     manifest_count: Optional[int] = None
@@ -74,7 +77,11 @@ def live_file_count(spark, table):
     """
     Number of data files referenced by the latest Iceberg snapshot.
 
-    These are the files used when querying the table.
+    NOTE: {table}.files includes ALL content types (data, position
+    deletes, equality deletes). Under Merge-on-Read this number can
+    stay flat even after compaction if delete files are the leftover,
+    since rewrite_data_files does not touch them. See delete_file_count
+    for the split-out view.
     """
 
     return spark.sql(f"""
@@ -83,12 +90,36 @@ def live_file_count(spark, table):
     """).collect()[0]["cnt"]
 
 
+def delete_file_count(spark, table):
+    """
+    Number of live delete files (position or equality deletes).
+
+    content = 0 -> data file
+    content = 1 -> position delete file
+    content = 2 -> equality delete file
+
+    These are invisible to rewrite_data_files. Under Merge-on-Read,
+    every MERGE/UPDATE/DELETE can leave one behind. They only get
+    cleaned up by rewrite_position_delete_files, and until then they
+    also keep their own manifests alive, which is why manifest_count
+    can stay high even after data files are compacted down to one.
+    """
+
+    return spark.sql(f"""
+        SELECT COUNT(*) AS cnt
+        FROM {table}.files
+        WHERE content != 0
+    """).collect()[0]["cnt"]
+
+
 def physical_file_count(table):
     """
     Counts parquet files physically present on disk.
 
     Unlike Iceberg metadata tables, this scans the warehouse
-    directory directly.
+    directory directly. Includes both data and delete-file
+    parquet files, since both live under the table's data/
+    directory on disk.
 
     Comparing this value with live_file_count shows whether
     obsolete parquet files still exist on disk.
@@ -208,7 +239,7 @@ def partition_file_counts(spark, table):
                 "file_count": live_file_count(spark, table)
             }
         ]
-    
+
 # ----------------------------------------------------------------------
 # Health Report Builder
 # ----------------------------------------------------------------------
@@ -250,6 +281,14 @@ def get_table_health(spark, table_name: str) -> TableHealthReport:
         errors,
         "average_file_size_bytes",
         lambda: average_file_size(spark, full_table_name)
+    )
+
+    # ---------------- Deletes (Merge-on-Read) ----------------
+
+    report.delete_file_count = _safe_metric(
+        errors,
+        "delete_file_count",
+        lambda: delete_file_count(spark, full_table_name)
     )
 
     # ---------------- Metadata ----------------
@@ -316,6 +355,10 @@ def print_report(report: TableHealthReport):
             f"Average File Size    : "
             f"{report.average_file_size_bytes / 1024:.2f} KB"
         )
+
+    print("\nDelete File Metrics")
+    print("-" * 65)
+    print(f"Delete Files         : {report.delete_file_count}")
 
     print("\nMetadata Metrics")
     print("-" * 65)
