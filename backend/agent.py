@@ -1,14 +1,17 @@
+import json
 import asyncio
-from google import genai
-from google.genai import types
-from config.config import GEMINI_API_KEY
+from openai import OpenAI
+from config.config import GROQ_API_KEY
 from backend.agent_tools import (
     check_lakehouse_health,
     optimize_lakehouse_table,
     remove_orphan_lakehouse_files
 )
 
-client = genai.Client(api_key=GEMINI_API_KEY)
+client = OpenAI(
+    api_key=GROQ_API_KEY,
+    base_url="https://api.groq.com/openai/v1"
+)
 
 TOOL_MAP = {
     "check_lakehouse_health": check_lakehouse_health,
@@ -19,7 +22,7 @@ TOOL_MAP = {
 # Tools that mutate state and must never fire without human confirmation.
 GUARDED_TOOLS = {"optimize_lakehouse_table", "remove_orphan_lakehouse_files"}
 
-MODEL_NAME = "gemini-2.5-flash"
+MODEL_NAME = "llama-3.1-8b-instant"
 
 SYSTEM_INSTRUCTION = (
     "You are a strict Data Engineering Maintenance Copilot specializing in Apache Iceberg tables. "
@@ -29,37 +32,108 @@ SYSTEM_INSTRUCTION = (
     "and explicitly tell the user that they must click the authorization button to confirm."
 )
 
-# Tools are declared so Gemini can see their signatures and decide to call
-# them, but automatic_function_calling.disable=True below means the SDK
-# never executes them itself -- execution always goes through TOOL_MAP,
-# where the confirmed-flag guardrail actually lives.
-GENERATE_CONFIG = types.GenerateContentConfig(
-    system_instruction=SYSTEM_INSTRUCTION,
-    tools=[check_lakehouse_health, optimize_lakehouse_table, remove_orphan_lakehouse_files],
-    automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-    temperature=0.2
-)
+# OpenAI-style tool schemas -- Groq's API is OpenAI-compatible, so tools are
+# declared as JSON schema function definitions, not passed as raw Python
+# callables the way Gemini's SDK allowed. This is a manual, explicit contract:
+# the model can only ever request a call shaped exactly like this, nothing more.
+TOOL_SCHEMAS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "check_lakehouse_health",
+            "description": (
+                "Queries an Iceberg table's structural health to detect file "
+                "fragmentation. Use this when a user asks if a table is slow, "
+                "degraded, or needs optimization."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "table_name": {
+                        "type": "string",
+                        "description": "Name of the target table (e.g., 'fact_orders', 'fact_order_items')."
+                    }
+                },
+                "required": ["table_name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "optimize_lakehouse_table",
+            "description": (
+                "Triggers data compaction (rewriting small parquet files), delete "
+                "file compaction, and snapshot expiration. This changes state and "
+                "deletes historical snapshots -- only call with confirmed=True if "
+                "the human has explicitly authorized the action."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "table_name": {
+                        "type": "string",
+                        "description": "Name of the target table."
+                    },
+                    "confirmed": {
+                        "type": "boolean",
+                        "description": "Explicit user confirmation flag."
+                    }
+                },
+                "required": ["table_name", "confirmed"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "remove_orphan_lakehouse_files",
+            "description": (
+                "Permanently deletes orphan files -- files present on disk but not "
+                "referenced by any live Iceberg snapshot for this table. This "
+                "permanently deletes files from disk and cannot be undone -- only "
+                "call with confirmed=True if the human has explicitly authorized it."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "table_name": {
+                        "type": "string",
+                        "description": "Name of the target table."
+                    },
+                    "confirmed": {
+                        "type": "boolean",
+                        "description": "Explicit user confirmation flag."
+                    }
+                },
+                "required": ["table_name", "confirmed"]
+            }
+        }
+    }
+]
 
 
-def _build_contents(message_history: list, current_user_input: str) -> list:
-    contents = [
-        types.Content(
-            role="user" if msg["sender"] == "user" else "model",
-            parts=[types.Part.from_text(text=msg["text"])]
-        )
-        for msg in message_history
-    ]
-    contents.append(
-        types.Content(role="user", parts=[types.Part.from_text(text=current_user_input)])
-    )
-    return contents
+def _build_messages(message_history: list, current_user_input: str) -> list:
+    """
+    OpenAI-style chat format: plain dicts with 'role'/'content', not the
+    types.Content/Part objects Gemini's SDK required.
+    """
+    messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
+
+    for msg in message_history:
+        role = "user" if msg["sender"] == "user" else "assistant"
+        messages.append({"role": role, "content": msg["text"]})
+
+    messages.append({"role": "user", "content": current_user_input})
+    return messages
 
 
 def _confirmation_prompt(active_table: str, current_user_input: str):
     """
     Catches explicit confirmation phrasing before it ever reaches the
-    LLM, so a user typing 'confirm optimize' doesn't depend on Gemini
-    correctly re-deriving intent from a fresh call.
+    LLM, so a user typing 'confirm optimize' doesn't depend on the model
+    correctly re-deriving intent from a fresh call -- also saves a real
+    API call against the free-tier daily limit.
     """
     clean_input = current_user_input.lower()
     if "confirm" not in clean_input and "authorize" not in clean_input:
@@ -86,9 +160,8 @@ def _confirmation_prompt(active_table: str, current_user_input: str):
 
 async def _execute_tool(tool_name: str, tool_args: dict):
     """
-    All three MCP tools are async (FastMCP-wrapped), so this is a
-    single async dispatch point rather than the asyncio.run()-per-call
-    pattern -- avoids spinning up a fresh event loop for every tool call.
+    All three MCP tools are async (FastMCP-wrapped), so this is a single
+    async dispatch point.
     """
     return await TOOL_MAP[tool_name](**tool_args)
 
@@ -98,25 +171,31 @@ async def _run_agent_turn_async(message_history: list, active_table: str, curren
     if pre_check:
         return pre_check
 
-    contents = _build_contents(message_history, current_user_input)
+    messages = _build_messages(message_history, current_user_input)
 
-    response = client.models.generate_content(
+    response = client.chat.completions.create(
         model=MODEL_NAME,
-        contents=contents,
-        config=GENERATE_CONFIG
+        messages=messages,
+        tools=TOOL_SCHEMAS,
+        tool_choice="auto",
+        temperature=0.2
     )
 
-    if not response.function_calls:
-        return {"sender": "assistant", "text": response.text}
+    choice = response.choices[0].message
 
-    # Only handling the first requested call -- Gemini can request
-    # multiple in one turn, but this agent's guardrail logic assumes
-    # a single mutating action per turn. Worth revisiting if you see
-    # multi-call responses in practice.
-    call = response.function_calls[0]
-    tool_name = call.name
-    tool_args = dict(call.args)
-    tool_args["table_name"] = active_table  # always pass the active table
+    if not choice.tool_calls:
+        return {"sender": "assistant", "text": choice.content}
+
+    # Only handling the first requested call -- this agent's guardrail logic
+    # assumes a single mutating action per turn.
+    tool_call = choice.tool_calls[0]
+    tool_name = tool_call.function.name
+    tool_args = json.loads(tool_call.function.arguments)
+
+    # Never trust the model's guess at which table -- it can misread the
+    # table name from free text (e.g. "orders" instead of "fact_orders").
+    # The active table is already known from the UI's table selector.
+    tool_args["table_name"] = active_table
 
     if tool_name in GUARDED_TOOLS and not tool_args.get("confirmed", False):
         confirm_type = "optimize" if tool_name == "optimize_lakehouse_table" else "orphans"
@@ -136,33 +215,41 @@ async def _run_agent_turn_async(message_history: list, active_table: str, curren
     except Exception as e:
         return {"sender": "assistant", "text": f"Tool execution failed: {str(e)}"}
 
-    follow_up_contents = contents + [
-        types.Content(
-            role="model",
-            parts=[types.Part.from_function_call(name=call.name, args=call.args)]
-        ),
-        types.Content(
-            role="user",
-            parts=[types.Part.from_function_response(
-                name=tool_name,
-                response={"result": tool_result}
-            )]
-        )
+    follow_up_messages = messages + [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": tool_call.id,
+                    "type": "function",
+                    "function": {
+                        "name": tool_name,
+                        "arguments": tool_call.function.arguments
+                    }
+                }
+            ]
+        },
+        {
+            "role": "tool",
+            "tool_call_id": tool_call.id,
+            "content": str(tool_result)
+        }
     ]
 
-    final_response = client.models.generate_content(
+    final_response = client.chat.completions.create(
         model=MODEL_NAME,
-        contents=follow_up_contents,
-        config=GENERATE_CONFIG
+        messages=follow_up_messages,
+        temperature=0.2
     )
-    return {"sender": "assistant", "text": final_response.text}
+    return {"sender": "assistant", "text": final_response.choices[0].message.content}
 
 
 def run_agent_turn(message_history: list, active_table: str, current_user_input: str):
     """
     Synchronous entry point for FastAPI's `def` (threadpool) endpoint.
-    Each call gets its own event loop via asyncio.run -- safe here
-    since threadpool workers don't already have a running loop.
+    Each call gets its own event loop via asyncio.run -- safe here since
+    threadpool workers don't already have a running loop.
     """
     return asyncio.run(
         _run_agent_turn_async(message_history, active_table, current_user_input)

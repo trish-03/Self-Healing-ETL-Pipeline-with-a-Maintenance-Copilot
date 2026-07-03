@@ -39,3 +39,7 @@ SPARK_PACKAGES = (
 
 #gemini api key configuration
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+
+#groq api key configuration
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
