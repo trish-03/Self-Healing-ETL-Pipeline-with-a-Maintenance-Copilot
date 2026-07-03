@@ -8,7 +8,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from connection.db_connection import get_connection
 from connection.spark_session import get_spark
 from data.incremental_fixture import generate_incremental_batch
-from etl.incremental_load import run_incremental_load
+from etl.incremental_load import run_incremental_load, get_watermark
 
 # --- Simulation constants -- adjust these to tune the run ---
 NUM_BATCHES = 70
@@ -41,7 +41,7 @@ def main():
     # This avoids 50x Spark startup overhead (~10-30s each)
     spark = get_spark("SimulateBatches")
 
-    batch_date = SIMULATION_START_DATE
+    batch_date = datetime.strptime(get_watermark(), "%Y-%m-%d %H:%M:%S")
     total_orders_merged = 0
     total_items_merged = 0
     failed_batches = []
@@ -82,6 +82,8 @@ def main():
         if random.random() < DAY_ADVANCE_PROBABILITY:
             batch_date += timedelta(days=1)
         # else: same date, next batch simulates a second load on the same day
+
+        print(f"  [DEBUG] batch_date is now {batch_date}")
 
     print("\n" + "=" * 60)
     print("Simulation complete.")
