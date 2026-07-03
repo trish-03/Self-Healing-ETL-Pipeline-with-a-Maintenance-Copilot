@@ -22,9 +22,9 @@ async def check_lakehouse_health(table_name: str) -> str:
     """
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
-            response = await client.post(
+            response = await client.get(
                 f"{FASTAPI_URL}/health",
-                json={"table_name": table_name}
+                params={"table": table_name}
             )
             if response.status_code != 200:
                 return f"Backend Error: {response.json().get('detail', 'Unknown error occurred.')}"
@@ -42,6 +42,8 @@ async def check_lakehouse_health(table_name: str) -> str:
                 f"• Avg File Size   : {metrics['average_file_size_bytes'] / 1024:.2f} KB\n"
             )
         except Exception as e:
+            import traceback
+            traceback.print_exc()  # prints to your uvicorn console
             return f"Failed to reach backend API layer: {str(e)}"
 
 

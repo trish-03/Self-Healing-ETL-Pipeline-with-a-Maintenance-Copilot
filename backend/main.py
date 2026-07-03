@@ -1,4 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException
+from backend.agent import run_agent_turn
+from pydantic import BaseModel
 
 from backend.dependencies import lifespan, get_spark_session
 from backend.schemas import (
@@ -31,6 +33,23 @@ app = FastAPI(
 # Initialize the network bridge from your custom config layer
 setup_cors(app)
 
+class ChatRequest(BaseModel):
+    table_name: str
+    message: str
+    history: list
+
+@app.post("/api/chat")
+def handle_copilot_chat(payload: ChatRequest):
+    """Router endpoint providing full Gemini processing loops to the Copilot Chat panel."""
+    try:
+        response_data = run_agent_turn(
+            message_history=payload.history,
+            active_table=payload.table_name,
+            current_user_input=payload.message
+        )
+        return response_data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Gemini Engine Error: {str(e)}")
 
 def _to_health_metrics(raw_health) -> HealthMetrics:
     """

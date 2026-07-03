@@ -36,3 +36,6 @@ SPARK_PACKAGES = (
     "org.apache.iceberg:iceberg-spark-runtime-4.1_2.13:1.11.0,"
     "org.postgresql:postgresql:42.7.4"
 )
+
+#gemini api key configuration
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
