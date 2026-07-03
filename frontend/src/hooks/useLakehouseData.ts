@@ -52,7 +52,7 @@ export function useExecuteMaintenance() {
   const queryClient = useQueryClient();
   return useMutation<MaintenanceResponse, Error, { tableName: string; confirmed: boolean }>({
     mutationFn: async ({ tableName, confirmed }) => {
-      const { data } = await axios.post(`${API_BASE}/maintenance`, { table: tableName, confirmed });
+      const { data } = await axios.post(`${API_BASE}/maintenance`, { table_name: tableName, confirmed });
       return data;
     },
     onSuccess: (data) => {
@@ -66,11 +66,32 @@ export function useRemoveOrphans() {
   const queryClient = useQueryClient();
   return useMutation<OrphanRemovalResponse, Error, { tableName: string; confirmed: boolean }>({
     mutationFn: async ({ tableName, confirmed }) => {
-      const { data } = await axios.post(`${API_BASE}/orphans`, { table: tableName, confirmed });
+      const { data } = await axios.post(`${API_BASE}/orphans`, { table_name: tableName, confirmed });
       return data;
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['tableHealth', data.table_name] });
     }
+  });
+}
+
+export interface ChatResponse {
+  sender: 'user' | 'assistant' | 'system';
+  text: string;
+  requiresConfirmation?: boolean;
+  confirmationType?: 'optimize' | 'orphans';
+  targetTable?: string;
+}
+
+export function useAgentChat() {
+  return useMutation<ChatResponse, Error, { tableName: string; message: string; history: any[] }>({
+    mutationFn: async ({ tableName, message, history }) => {
+      const { data } = await axios.post(`${API_BASE}/chat`, {
+        table_name: tableName,
+        message,
+        history,
+      });
+      return data;
+    },
   });
 }
