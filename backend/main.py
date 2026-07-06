@@ -9,10 +9,8 @@ from backend.schemas import (
     OrphanRemovalRequest, OrphanRemovalResponse
 )
 
-# Import the isolated CORS setup from your top-level config package
 from backend.config.cors import setup_cors
 
-# Import your existing functional Data Engineering logic
 from maintenance.health_metrics import get_table_health
 from maintenance.compaction import (
     compact_table,
@@ -30,7 +28,6 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Initialize the network bridge from your custom config layer
 setup_cors(app)
 
 class ChatRequest(BaseModel):
@@ -39,29 +36,39 @@ class ChatRequest(BaseModel):
     history: list
 
 @app.post("/api/chat")
-def handle_copilot_chat(payload: ChatRequest):
-    """Router endpoint providing full Gemini processing loops to the Copilot Chat panel."""
+async def handle_copilot_chat(payload: ChatRequest):
+    """Router endpoint providing the full agent processing loop to the Copilot Chat panel."""
     try:
-        response_data = run_agent_turn(
+        response_data = await run_agent_turn(
             message_history=payload.history,
             active_table=payload.table_name,
             current_user_input=payload.message
         )
         return response_data
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Gemini Engine Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Agent Engine Error: {str(e)}")
+
 
 def _to_health_metrics(raw_health) -> HealthMetrics:
     """
     Converts a maintenance.health_metrics.TableHealthReport into the
-    API's HealthMetrics schema, filling in safe defaults for any
-    metric that failed to collect (see _safe_metric in health_metrics.py).
+    API's HealthMetrics schema, filling in safe defaults for any metric
+    that failed to collect (see _safe_metric in health_metrics.py).
+
+    The backend surfaces every metric the DE layer collects -- the
+    frontend decides which subset actually gets displayed. Keeping the
+    full set here means adding a new chart later doesn't require a
+    backend change, only a frontend one.
     """
     return HealthMetrics(
-        snapshot_count=raw_health.snapshot_count if raw_health.snapshot_count is not None else 0,
         live_file_count=raw_health.live_file_count if raw_health.live_file_count is not None else 0,
+        physical_file_count=raw_health.physical_file_count if raw_health.physical_file_count is not None else 0,
         average_file_size_bytes=int(raw_health.average_file_size_bytes) if raw_health.average_file_size_bytes is not None else 0,
         delete_file_count=raw_health.delete_file_count if raw_health.delete_file_count is not None else 0,
+        snapshot_count=raw_health.snapshot_count if raw_health.snapshot_count is not None else 0,
+        manifest_count=raw_health.manifest_count if raw_health.manifest_count is not None else 0,
+        metadata_json_count=raw_health.metadata_json_count if raw_health.metadata_json_count is not None else 0,
+        orphan_file_count=raw_health.orphan_file_count if raw_health.orphan_file_count is not None else 0,
     )
 
 
@@ -78,10 +85,10 @@ def _is_fragmented(metrics: HealthMetrics) -> bool:
 
 
 @app.get("/api/health", response_model=TableHealthResponse)
-def check_table_health(table: str, spark=Depends(get_spark_session)): # <-- Expect a plain string 'table'
+def check_table_health(table: str, spark=Depends(get_spark_session)):
     """API endpoint backing the check_lakehouse_health MCP tool."""
     try:
-        raw_health = get_table_health(spark, table) # <-- Pass the variable directly
+        raw_health = get_table_health(spark, table)
         metrics = _to_health_metrics(raw_health)
         status = "FRAGMENTED" if _is_fragmented(metrics) else "HEALTHY"
 
@@ -93,10 +100,10 @@ def check_table_health(table: str, spark=Depends(get_spark_session)): # <-- Expe
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to query metadata: {str(e)}")
 
+
 @app.post("/api/maintenance", response_model=MaintenanceResponse)
 def execute_table_maintenance(payload: MaintenanceRequest, spark=Depends(get_spark_session)):
     """API endpoint backing the optimize_lakehouse_table MCP tool with a built-in guardrail."""
-    # Strict Confirmation Gate Check
     if not payload.confirmed:
         raise HTTPException(
             status_code=400,
@@ -106,18 +113,15 @@ def execute_table_maintenance(payload: MaintenanceRequest, spark=Depends(get_spa
     full_table_name = f"{CATALOG_NAME}.warehouse.{payload.table_name}"
 
     try:
-        # 1. Capture 'Before' Metrics
-        before_raw = get_table_health(spark, payload.table_name)
+        before_raw = get_table_health(spark, payload.table_name, event_type="maintenance_before")
         before_metrics = _to_health_metrics(before_raw)
         fragmented = _is_fragmented(before_metrics)
 
-        # 2. Run Spark Mutations
         rewritten_count = compact_table(spark, full_table_name) if fragmented else 0
         deletes_rewritten_count = compact_delete_files(spark, full_table_name)
         deleted_count = expire_snapshots(spark, full_table_name)
 
-        # 3. Capture 'After' Metrics
-        after_raw = get_table_health(spark, payload.table_name)
+        after_raw = get_table_health(spark, payload.table_name, event_type="maintenance_after")
         after_metrics = _to_health_metrics(after_raw)
 
         return MaintenanceResponse(
@@ -131,7 +135,7 @@ def execute_table_maintenance(payload: MaintenanceRequest, spark=Depends(get_spa
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Spark maintenance job failed: {str(e)}")
-    
+
 
 @app.post("/api/orphans", response_model=OrphanRemovalResponse)
 def remove_orphan_files_endpoint(payload: OrphanRemovalRequest, spark=Depends(get_spark_session)):
@@ -154,3 +158,4 @@ def remove_orphan_files_endpoint(payload: OrphanRemovalRequest, spark=Depends(ge
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Orphan removal job failed: {str(e)}")
+    

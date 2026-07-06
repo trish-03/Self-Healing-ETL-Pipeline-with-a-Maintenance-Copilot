@@ -4,10 +4,21 @@ class TableHealthRequest(BaseModel):
     table_name: str = Field(..., example="fact_orders")
 
 class HealthMetrics(BaseModel):
-    snapshot_count: int
+    # Storage
     live_file_count: int
+    physical_file_count: int
     average_file_size_bytes: int
+
+    # Delete files (Merge-on-Read)
     delete_file_count: int
+
+    # Metadata
+    snapshot_count: int
+    manifest_count: int
+    metadata_json_count: int
+
+    # Cleanup (read-only dry-run count; actual removal is a separate action)
+    orphan_file_count: int
 
 class TableHealthResponse(BaseModel):
     table_name: str
@@ -26,6 +37,7 @@ class MaintenanceResponse(BaseModel):
     files_deleted: int
     before: HealthMetrics
     after: HealthMetrics
+
 class OrphanRemovalRequest(BaseModel):
     table_name: str = Field(..., example="fact_orders")
     confirmed: bool = Field(..., description="Must be explicitly True from the user to execute.")
