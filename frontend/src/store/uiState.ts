@@ -21,3 +21,4 @@ export const chatHistoryAtom = atom<Message[]>([
   }
 ]);
 
+export const themeAtom = atom<'dark' | 'light'>('dark');
