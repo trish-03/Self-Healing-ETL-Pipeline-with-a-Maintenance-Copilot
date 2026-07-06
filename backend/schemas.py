@@ -1,4 +1,5 @@
 from pydantic import BaseModel, Field
+from datetime import datetime
 
 class TableHealthRequest(BaseModel):
     table_name: str = Field(..., example="fact_orders")
@@ -46,3 +47,19 @@ class OrphanRemovalResponse(BaseModel):
     executed: bool
     message: str
     orphan_file_count: int | None
+
+class HealthHistoryEntry(BaseModel):
+    checked_at: datetime
+    live_file_count: int | None
+    physical_file_count: int | None
+    average_file_size_bytes: float | None
+    delete_file_count: int | None
+    snapshot_count: int | None
+    manifest_count: int | None
+    metadata_json_count: int | None
+    orphan_file_count: int | None
+    event_type: str
+
+class HealthHistoryResponse(BaseModel):
+    table_name: str
+    history: list[HealthHistoryEntry]

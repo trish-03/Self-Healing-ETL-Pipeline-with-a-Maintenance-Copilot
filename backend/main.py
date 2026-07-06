@@ -1,12 +1,13 @@
 from fastapi import FastAPI, Depends, HTTPException
 from backend.agent import run_agent_turn
 from pydantic import BaseModel
-
+from connection.db_connection import get_connection
 from backend.dependencies import lifespan, get_spark_session
 from backend.schemas import (
     TableHealthRequest, TableHealthResponse, HealthMetrics,
     MaintenanceRequest, MaintenanceResponse,
-    OrphanRemovalRequest, OrphanRemovalResponse
+    OrphanRemovalRequest, OrphanRemovalResponse,
+    HealthHistoryEntry, HealthHistoryResponse
 )
 
 from backend.config.cors import setup_cors
@@ -159,3 +160,42 @@ def remove_orphan_files_endpoint(payload: OrphanRemovalRequest, spark=Depends(ge
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Orphan removal job failed: {str(e)}")
     
+@app.get("/api/health/history", response_model=HealthHistoryResponse)
+def get_health_history(table: str, limit: int = 100):
+    """
+    Returns the chronological metric history for a table, driven by
+    raw.table_health_history. Powers the dashboard's trend chart --
+    real data captured by every get_table_health() call, not mocked
+    or reconstructed client-side.
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT checked_at, live_file_count, physical_file_count,
+                   average_file_size_bytes, delete_file_count,
+                   snapshot_count, manifest_count, metadata_json_count,
+                   orphan_file_count, event_type
+            FROM raw.table_health_history
+            WHERE table_name = %s
+            ORDER BY checked_at ASC
+            LIMIT %s
+        """, (table, limit))
+        rows = cur.fetchall()
+        cur.close()
+
+        history = [
+            HealthHistoryEntry(
+                checked_at=row[0], live_file_count=row[1], physical_file_count=row[2],
+                average_file_size_bytes=row[3], delete_file_count=row[4],
+                snapshot_count=row[5], manifest_count=row[6], metadata_json_count=row[7],
+                orphan_file_count=row[8], event_type=row[9]
+            )
+            for row in rows
+        ]
+
+        return HealthHistoryResponse(table_name=table, history=history)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to query health history: {str(e)}")
+    finally:
+        conn.close()
