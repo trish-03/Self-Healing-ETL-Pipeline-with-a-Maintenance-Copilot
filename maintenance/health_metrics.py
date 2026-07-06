@@ -7,6 +7,7 @@ from typing import Optional
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from connection.db_connection import get_connection
 from connection.spark_session import get_spark
 from config.config import CATALOG_NAME, WAREHOUSE_PATH
 
@@ -275,7 +276,43 @@ def partition_file_counts(spark, table):
 # Health Report Builder
 # ----------------------------------------------------------------------
 
-def get_table_health(spark, table_name: str) -> TableHealthReport:
+def _log_health_snapshot(report: "TableHealthReport", event_type: str = "health_check"):
+    """
+    Inserts one row into raw.table_health_history capturing this report.
+
+    Failures here are logged but never raised -- a metrics-logging problem
+    should not break a health check or maintenance run. This mirrors the
+    same fault-isolation philosophy as _safe_metric: one failing piece
+    doesn't take down the whole operation.
+    """
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO raw.table_health_history (
+                table_name, checked_at,
+                live_file_count, physical_file_count, average_file_size_bytes,
+                delete_file_count,
+                snapshot_count, manifest_count, metadata_json_count,
+                orphan_file_count,
+                event_type
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            report.table, report.checked_at,
+            report.live_file_count, report.physical_file_count, report.average_file_size_bytes,
+            report.delete_file_count,
+            report.snapshot_count, report.manifest_count, report.metadata_json_count,
+            report.orphan_file_count,
+            event_type
+        ))
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"  [WARN] Failed to log health snapshot: {e}")
+
+
+def get_table_health(spark, table_name: str, event_type: str = "health_check") -> TableHealthReport:
     """
     Collects all available metrics for an Iceberg table.
 
@@ -360,6 +397,8 @@ def get_table_health(spark, table_name: str) -> TableHealthReport:
         )
         or []
     )
+
+    _log_health_snapshot(report, event_type=event_type)
 
     return report
 

@@ -54,3 +54,38 @@ CREATE TABLE IF NOT EXISTS raw.order_items (
     line_total FLOAT,
     created_at TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS raw.pipeline_watermark (
+    source_name     TEXT PRIMARY KEY,   
+    last_loaded_at  TIMESTAMP NOT NULL,
+    updated_at      TIMESTAMP NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS raw.table_health_history (
+    id                      SERIAL PRIMARY KEY,
+    table_name              TEXT NOT NULL,
+    checked_at              TIMESTAMP NOT NULL,
+
+    -- Storage metrics
+    live_file_count         INTEGER,
+    physical_file_count     INTEGER,
+    average_file_size_bytes DOUBLE PRECISION,
+
+    -- Delete file metrics (MoR)
+    delete_file_count       INTEGER,
+
+    -- Metadata metrics
+    snapshot_count          INTEGER,
+    manifest_count          INTEGER,
+    metadata_json_count     INTEGER,
+
+    -- Cleanup metric
+    orphan_file_count       INTEGER,
+
+    -- Context: was this a plain health check, or a maintenance before/after snapshot?
+    event_type              TEXT NOT NULL DEFAULT 'health_check'
+                             CHECK (event_type IN ('health_check', 'maintenance_before', 'maintenance_after', 'orphan_removal'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_health_history_table_time
+    ON raw.table_health_history (table_name, checked_at);
