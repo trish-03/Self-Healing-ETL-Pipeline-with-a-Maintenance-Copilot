@@ -1,4 +1,5 @@
 import { atom } from 'jotai';
+import { atomWithStorage } from 'jotai/utils';
 
 export interface Message {
   id: string;
@@ -21,4 +22,4 @@ export const chatHistoryAtom = atom<Message[]>([
   }
 ]);
 
-export const themeAtom = atom<'dark' | 'light'>('dark');
+export const themeAtom = atomWithStorage<'light' | 'dark'>('theme', 'dark');

@@ -20,7 +20,7 @@ import {
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 
 import { activeTableAtom, themeAtom } from './store/uiState';
-import { useTableHealth } from './hooks/useLakehouseData';
+import { useTableHealth, useTableHealthHistory } from './hooks/useLakehouseData';
 import CopilotChat from './components/copilotChat';
 
 const queryClient = new QueryClient();
@@ -32,40 +32,35 @@ function DashboardContent() {
   const [theme, setTheme] = useAtom(themeAtom);
   const [activeTable, setActiveTable] = useAtom(activeTableAtom);
   const { data: health, isLoading } = useTableHealth(activeTable);
+  const { data: healthHistory } = useTableHealthHistory(activeTable);
 
-  const [chartData, setChartData] = useState<any[]>([]);
-
+  // Apply/remove the 'dark' class on the root element whenever theme changes,
+  // so Tailwind's dark: variants activate throughout the whole tree.
   useEffect(() => {
-    if (health) {
-      const live = health.metrics.live_file_count;
-      const deletes = health.metrics.delete_file_count;
-
-      if (health.status === 'FRAGMENTED') {
-        setChartData([
-          { batch: 'B01', live_files: 2, delete_files: 0 },
-          { batch: 'B15', live_files: 24, delete_files: 10 },
-          { batch: 'B30', live_files: 58, delete_files: 22 },
-          { batch: 'B45', live_files: 80, delete_files: 35 },
-          { batch: 'Current State', live_files: live, delete_files: deletes }
-        ]);
-      } else {
-        setChartData([
-          { batch: 'Pre-Compaction', live_files: 94, delete_files: 44 },
-          { batch: 'Optimizing Spark Event', live_files: 12, delete_files: 4 },
-          { batch: 'Post-Compaction', live_files: live, delete_files: deletes }
-        ]);
-      }
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
     }
-  }, [health]);
+  }, [theme]);
 
-// Add this effect to sync the theme state with the DOM root
-useEffect(() => {
-  if (theme === 'dark') {
-    document.documentElement.classList.add('dark');
-  } else {
-    document.documentElement.classList.remove('dark');
-  }
-}, [theme]);  
+  // Real chart data, sourced from raw.table_health_history via
+  // /api/health/history -- no mocked/fabricated points.
+  // Filtered to plain health_check events so the trend line reflects
+  // organic growth over time, not the sawtooth maintenance before/after
+  // pairs would otherwise introduce.
+  const chartData = (healthHistory?.history ?? [])
+    .filter(h => h.event_type === 'health_check')
+    .map((h) => ({
+      batch: new Date(h.checked_at).toLocaleString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      }),
+      live_files: h.live_file_count ?? 0,
+      delete_files: h.delete_file_count ?? 0,
+    }));
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-slate-50 dark:bg-[#0b0f17] text-slate-900 dark:text-slate-100">
@@ -171,58 +166,73 @@ useEffect(() => {
         <div className="flex-1 overflow-y-auto p-8">
           {currentView === 'dashboard' && (
             <div className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 p-5 rounded-xl flex items-center justify-between">
-                  <div>
-                    <span className="text-[10px] font-bold tracking-widest text-slate-500 uppercase block mb-1">Table State Status</span>
-                    <span className={`text-lg font-extrabold flex items-center gap-2 ${health?.status === 'FRAGMENTED' ? 'text-amber-500' : 'text-emerald-500'}`}>
-                      {isLoading ? 'Reading Table Metadata...' : health?.status}
-                      {!isLoading && (health?.status === 'FRAGMENTED' ? <AlertTriangle size={18} /> : <CheckCircle2 size={18} />)}
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                  <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 p-5 rounded-xl flex items-center justify-between overflow-hidden">
+                    <div className="min-w-0">
+                      <span className="text-[10px] font-bold tracking-widest text-slate-500 uppercase block mb-1">Table State Status</span>
+                      <span className={`text-base font-extrabold flex items-center gap-1.5 whitespace-nowrap ${health?.status === 'FRAGMENTED' ? 'text-amber-500' : 'text-emerald-500'}`}>
+                        {isLoading ? 'Reading...' : health?.status}
+                        {!isLoading && (health?.status === 'FRAGMENTED' ? <AlertTriangle size={16} className="shrink-0" /> : <CheckCircle2 size={16} className="shrink-0" />)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 p-5 rounded-xl">
+                    <span className="text-[10px] font-bold tracking-widest text-slate-500 uppercase block mb-1">Live Parquet Blocks</span>
+                    <span className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">{isLoading ? '...' : health?.metrics.live_file_count}</span>
+                  </div>
+
+                  <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 p-5 rounded-xl">
+                    <span className="text-[10px] font-bold tracking-widest text-slate-500 uppercase block mb-1">Snapshot Count</span>
+                    <span className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">{isLoading ? '...' : health?.metrics.snapshot_count}</span>
+                  </div>
+
+                  <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 p-5 rounded-xl">
+                    <span className="text-[10px] font-bold tracking-widest text-slate-500 uppercase block mb-1">Average File Size</span>
+                    <span className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
+                      {isLoading ? '...' : `${((health?.metrics.average_file_size_bytes ?? 0) / 1024).toFixed(2)} KB`}
+                    </span>
+                  </div>
+
+                  <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 p-5 rounded-xl">
+                    <span className="text-[10px] font-bold tracking-widest text-slate-500 uppercase block mb-1">Delete Files</span>
+                    <span className={`text-2xl font-black tracking-tight ${health?.metrics.delete_file_count && health.metrics.delete_file_count > 0 ? 'text-red-500 dark:text-red-400' : 'text-slate-400'}`}>
+                      {isLoading ? '...' : health?.metrics.delete_file_count}
                     </span>
                   </div>
                 </div>
-                <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 p-5 rounded-xl">
-                  <span className="text-[10px] font-bold tracking-widest text-slate-500 uppercase block mb-1">Live Parquet Blocks</span>
-                  <span className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">{isLoading ? '...' : health?.metrics.live_file_count}</span>
-                </div>
-                <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 p-5 rounded-xl">
-                  <span className="text-[10px] font-bold tracking-widest text-slate-500 uppercase block mb-1">Dangling MoR Deletes</span>
-                  <span className={`text-2xl font-black tracking-tight ${health?.metrics.delete_file_count && health.metrics.delete_file_count > 0 ? 'text-red-500 dark:text-red-400' : 'text-slate-400'}`}>
-                    {isLoading ? '...' : health?.metrics.delete_file_count}
-                  </span>
-                </div>
-                <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 p-5 rounded-xl">
-                  <span className="text-[10px] font-bold tracking-widest text-slate-500 uppercase block mb-1">Tracked JSON Metadata</span>
-                  <span className="text-2xl font-black text-slate-600 dark:text-slate-300 tracking-tight">{isLoading ? '...' : health?.metrics.metadata_json_count}</span>
-                </div>
-              </div>
-
               <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 h-96 rounded-xl p-6 flex flex-col">
                 <div className="mb-4">
                   <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">Small-File Frag & Position Delete Accumulation Trend</h3>
-                  <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">Visually monitors write amplification scaling against optimization operations</p>
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">Real snapshot history from raw.table_health_history -- health checks only, maintenance events excluded from this line.</p>
                 </div>
                 <div className="flex-1 w-full min-h-0">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
-                      <defs>
-                        <linearGradient id="colorLive" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#6366f1" stopOpacity={0.2}/>
-                          <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
-                        </linearGradient>
-                        <linearGradient id="colorDeletes" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#f87171" stopOpacity={0.2}/>
-                          <stop offset="95%" stopColor="#f87171" stopOpacity={0}/>
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-                      <XAxis dataKey="batch" stroke="#6b7280" fontSize={10} tickLine={false} />
-                      <YAxis stroke="#6b7280" fontSize={10} tickLine={false} />
-                      <Tooltip contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', borderRadius: '8px', fontSize: '11px', color: '#e2e8f0' }} />
-                      <Area type="monotone" dataKey="live_files" name="Live Data Files" stroke="#6366f1" fillOpacity={1} fill="url(#colorLive)" strokeWidth={2} />
-                      <Area type="monotone" dataKey="delete_files" name="Position Deletes" stroke="#f87171" fillOpacity={1} fill="url(#colorDeletes)" strokeWidth={2} />
-                    </AreaChart>
-                  </ResponsiveContainer>
+                  {chartData.length === 0 ? (
+                    <div className="h-full flex items-center justify-center text-slate-400 dark:text-slate-600 text-xs italic">
+                      No health history yet for this table -- run a health check or maintenance pass to populate this chart.
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="colorLive" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#6366f1" stopOpacity={0.2}/>
+                            <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
+                          </linearGradient>
+                          <linearGradient id="colorDeletes" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#f87171" stopOpacity={0.2}/>
+                            <stop offset="95%" stopColor="#f87171" stopOpacity={0}/>
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                        <XAxis dataKey="batch" stroke="#6b7280" fontSize={10} tickLine={false} />
+                        <YAxis stroke="#6b7280" fontSize={10} tickLine={false} />
+                        <Tooltip contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', borderRadius: '8px', fontSize: '11px', color: '#e2e8f0' }} />
+                        <Area type="monotone" dataKey="live_files" name="Live Data Files" stroke="#6366f1" fillOpacity={1} fill="url(#colorLive)" strokeWidth={2} />
+                        <Area type="monotone" dataKey="delete_files" name="Position Deletes" stroke="#f87171" fillOpacity={1} fill="url(#colorDeletes)" strokeWidth={2} />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  )}
                 </div>
               </div>
             </div>
