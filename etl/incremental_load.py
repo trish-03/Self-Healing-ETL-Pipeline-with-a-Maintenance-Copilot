@@ -4,6 +4,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from connection.spark_session import get_spark
+from connection.db_connection import get_connection
 from config.config import JDBC_URL, JDBC_PROPS, CATALOG_NAME
 
 # Watermark file lives at project root
@@ -13,29 +14,76 @@ WATERMARK_FILE = "watermark.txt"
 # so the first incremental run should only pull rows changed after that point
 DEFAULT_WATERMARK = "2024-12-31 00:00:00"
 
+#replacing the watermark.txt file with postgres table to store the watermark value
+WATERMARK_SOURCE = "fact_orders"
+
+"""old txt file watermark approach"""
+# def get_watermark():
+#     """Reads last successful run time from watermark from postgres table.
+
+#     Returns DEFAULT_WATERMARK if the file doesn't exist -- meaning this is
+#     the first incremental run after initial_load.py, or the file was reset.
+#     """
+#     if os.path.exists(WATERMARK_FILE):
+#         with open(WATERMARK_FILE, "r") as f:
+#             value = f.read().strip()
+#             if value:
+#                 return value
+#     return DEFAULT_WATERMARK
+
+
+# def update_watermark(new_timestamp):
+#     """Overwrites watermark.txt with the current run's timestamp.
+
+#     Called only after a successful MERGE so a failed run doesn't falsely
+#     advance the watermark and silently skip rows on the next run.
+#     """
+#     with open(WATERMARK_FILE, "w") as f:
+#         f.write(str(new_timestamp))
+
 
 def get_watermark():
-    """Reads last successful run time from watermark.txt.
+    """Reads the last successful run's watermark from Postgres.
 
-    Returns DEFAULT_WATERMARK if the file doesn't exist -- meaning this is
-    the first incremental run after initial_load.py, or the file was reset.
+    Returns DEFAULT_WATERMARK if no row exists yet for this source --
+    meaning this is the first incremental run after initial_load.py,
+    or the watermark table was reset.
     """
-    if os.path.exists(WATERMARK_FILE):
-        with open(WATERMARK_FILE, "r") as f:
-            value = f.read().strip()
-            if value:
-                return value
-    return DEFAULT_WATERMARK
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT last_loaded_at FROM raw.pipeline_watermark WHERE source_name = %s",
+            (WATERMARK_SOURCE,)
+        )
+        row = cur.fetchone()
+        cur.close()
+        if row:
+            return str(row[0])
+        return DEFAULT_WATERMARK
+    finally:
+        conn.close()
 
 
 def update_watermark(new_timestamp):
-    """Overwrites watermark.txt with the current run's timestamp.
+    """Upserts the current run's watermark into Postgres.
 
     Called only after a successful MERGE so a failed run doesn't falsely
     advance the watermark and silently skip rows on the next run.
     """
-    with open(WATERMARK_FILE, "w") as f:
-        f.write(str(new_timestamp))
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO raw.pipeline_watermark (source_name, last_loaded_at, updated_at)
+            VALUES (%s, %s, now())
+            ON CONFLICT (source_name)
+            DO UPDATE SET last_loaded_at = EXCLUDED.last_loaded_at, updated_at = now()
+        """, (WATERMARK_SOURCE, new_timestamp))
+        conn.commit()
+        cur.close()
+    finally:
+        conn.close()
 
 
 def run_incremental_load(spark):

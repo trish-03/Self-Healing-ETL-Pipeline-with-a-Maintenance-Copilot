@@ -177,7 +177,7 @@ def run_maintenance(spark, table_name):
     # BEFORE
     # ----------------------------------------------------------
 
-    before = get_table_health(spark, table_name)
+    before = get_table_health(spark, table_name, event_type="maintenance_before")
 
     print("\nBefore Maintenance")
     print_report(before)
@@ -244,7 +244,7 @@ def run_maintenance(spark, table_name):
     # AFTER
     # ----------------------------------------------------------
 
-    after = get_table_health(spark, table_name)
+    after = get_table_health(spark, table_name, event_type="maintenance_after")
 
     print("\nAfter Maintenance")
     print_report(after)

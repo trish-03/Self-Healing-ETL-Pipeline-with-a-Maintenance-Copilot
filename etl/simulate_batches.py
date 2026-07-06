@@ -80,7 +80,10 @@ def main():
 
         # Advance batch_date based on 80/20 day-advance probability
         if random.random() < DAY_ADVANCE_PROBABILITY:
-            batch_date += timedelta(days=1)
+            batch_date += timedelta(hours=random.randint(1, 23), minutes=random.randint(0, 59))
+        else:
+            batch_date += timedelta(minutes=random.randint(5, 90))
+
         # else: same date, next batch simulates a second load on the same day
 
         print(f"  [DEBUG] batch_date is now {batch_date}")

@@ -2,6 +2,8 @@ import os
 import sys
 from pyspark.sql.functions import monotonically_increasing_id, months, col
 
+from connection.db_connection import get_connection
+
 # connection package — get_spark returns a configured SparkSession
 from connection.spark_session import get_spark
 
@@ -50,6 +52,8 @@ orders.writeTo(f"{CATALOG_NAME}.warehouse.fact_orders") \
     .tableProperty("write.merge.mode", "merge-on-read") \
     .tableProperty("write.update.mode", "merge-on-read") \
     .tableProperty("write.delete.mode", "merge-on-read") \
+    .tableProperty("write.metadata.delete-after-commit.enabled", "true") \
+    .tableProperty("write.metadata.previous-versions-max", "10") \
     .createOrReplace()
     #.partitionedBy(months(col("created_at"))) \
 
@@ -72,10 +76,22 @@ print(f"   fact_order_items : {order_items.count()} rows")
 
 spark.stop()
 
+
+"""old txt file way"""
 # Reset watermark so the next incremental run starts from DATE_END,
-# not from a stale timestamp left over from a previous pipeline run.
-# Deleting is cleaner than overwriting -- get_watermark() handles the
-# missing-file case by returning DEFAULT_WATERMARK automatically.
-if os.path.exists("watermark.txt"):
-    os.remove("watermark.txt")
-    print("Watermark reset.")
+# # not from a stale timestamp left over from a previous pipeline run.
+# # Deleting is cleaner than overwriting -- get_watermark() handles the
+# # missing-file case by returning DEFAULT_WATERMARK automatically.
+# if os.path.exists("watermark.txt"):
+#     os.remove("watermark.txt")
+#     print("Watermark reset.")
+
+
+
+conn = get_connection()
+cur = conn.cursor()
+cur.execute("DELETE FROM raw.pipeline_watermark WHERE source_name = 'fact_orders'")
+conn.commit()
+cur.close()
+conn.close()
+print("Watermark reset.")
