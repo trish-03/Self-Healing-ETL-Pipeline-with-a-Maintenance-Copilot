@@ -96,3 +96,34 @@ export function useAgentChat() {
     },
   });
 }
+
+export interface HealthHistoryEntry {
+  checked_at: string;
+  live_file_count: number | null;
+  physical_file_count: number | null;
+  average_file_size_bytes: number | null;
+  delete_file_count: number | null;
+  snapshot_count: number | null;
+  manifest_count: number | null;
+  metadata_json_count: number | null;
+  orphan_file_count: number | null;
+  event_type: string;
+}
+
+export interface HealthHistoryResponse {
+  table_name: string;
+  history: HealthHistoryEntry[];
+}
+
+export function useTableHealthHistory(tableName: string, limit: number = 100) {
+  return useQuery<HealthHistoryResponse>({
+    queryKey: ['tableHealthHistory', tableName],
+    queryFn: async () => {
+      const { data } = await axios.get(`${API_BASE}/health/history`, {
+        params: { table: tableName, limit }
+      });
+      return data;
+    },
+    refetchInterval: 30000
+  });
+}
