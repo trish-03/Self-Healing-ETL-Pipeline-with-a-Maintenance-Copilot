@@ -24,12 +24,13 @@ DAY_ADVANCE_PROBABILITY = 0.80
 SIMULATION_START_DATE = datetime(2025, 1, 1)
 
 
-def main():
-    # Open a single Postgres connection reused across all batches
+def run_simulation_batches(spark, num_batches=NUM_BATCHES, num_updates_per_batch=NUM_UPDATES_PER_BATCH, num_new_orders_per_batch=NUM_NEW_ORDERS_PER_BATCH):
+    """
+    Core simulation loop, reusable by both the standalone script and the
+    /api/simulate endpoint. Accepts an already-running Spark session,
+    same pattern as run_incremental_load.
+    """
     conn = get_connection()
-
-    # Fetch existing customer_ids and sku_codes once -- reused by every batch
-    # rather than querying Postgres 50 times for the same data
     cur = conn.cursor()
     cur.execute("SELECT customer_id FROM raw.customers")
     customer_ids = [row[0] for row in cur.fetchall()]
@@ -37,66 +38,51 @@ def main():
     sku_codes = [row[0] for row in cur.fetchall()]
     cur.close()
 
-    # Open a single Spark session reused across all 50 batches
-    # This avoids 50x Spark startup overhead (~10-30s each)
-    spark = get_spark("SimulateBatches")
-
     batch_date = datetime.strptime(get_watermark(), "%Y-%m-%d %H:%M:%S")
     total_orders_merged = 0
     total_items_merged = 0
     failed_batches = []
 
-    print(f"Starting simulation: {NUM_BATCHES} batches, "
-          f"{NUM_UPDATES_PER_BATCH} updates + {NUM_NEW_ORDERS_PER_BATCH} new orders per batch")
-    print(f"Starting from {batch_date.date()}")
-    print("-" * 60)
-
-    for batch_num in range(1, NUM_BATCHES + 1):
-        print(f"\nBatch {batch_num}/{NUM_BATCHES} -- {batch_date.date()}")
-
+    for batch_num in range(1, num_batches + 1):
         try:
-            # Step 1: Generate incremental changes in Postgres
             generate_incremental_batch(
-                conn,
-                customer_ids,
-                sku_codes,
-                batch_date,
-                num_updates=NUM_UPDATES_PER_BATCH,
-                num_new_orders=NUM_NEW_ORDERS_PER_BATCH
+                conn, customer_ids, sku_codes, batch_date,
+                num_updates=num_updates_per_batch,
+                num_new_orders=num_new_orders_per_batch
             )
-
-            # Step 2: Load those changes into Iceberg via MERGE
-            # Each call creates a new small Parquet file -- this is intentional,
-            # the accumulation of 50 small files is what the maintenance agent detects
             summary = run_incremental_load(spark)
             total_orders_merged += summary["orders_merged"]
             total_items_merged += summary["items_merged"]
-
         except Exception as e:
-            # Log the failure but continue -- goal is 50 batches of files,
-            # not perfect consistency on every single batch
-            print(f"  [ERROR] Batch {batch_num} failed: {e}")
             failed_batches.append(batch_num)
 
-        # Advance batch_date based on 80/20 day-advance probability
         if random.random() < DAY_ADVANCE_PROBABILITY:
             batch_date += timedelta(hours=random.randint(1, 23), minutes=random.randint(0, 59))
         else:
             batch_date += timedelta(minutes=random.randint(5, 90))
 
-        # else: same date, next batch simulates a second load on the same day
-
-        print(f"  [DEBUG] batch_date is now {batch_date}")
-
-    print("\n" + "=" * 60)
-    print("Simulation complete.")
-    print(f"  Total orders merged : {total_orders_merged}")
-    print(f"  Total items merged  : {total_items_merged}")
-    print(f"  Failed batches      : {failed_batches if failed_batches else 'none'}")
-    print("=" * 60)
-
     conn.close()
-    spark.stop()
+
+    return {
+        "batches_run": num_batches - len(failed_batches),
+        "total_orders_merged": total_orders_merged,
+        "total_items_merged": total_items_merged,
+        "failed_batches": failed_batches
+    }
+
+
+def main():
+    spark = get_spark("SimulateBatches")
+    try:
+        result = run_simulation_batches(spark)
+        print("\n" + "=" * 60)
+        print("Simulation complete.")
+        print(f"  Total orders merged : {result['total_orders_merged']}")
+        print(f"  Total items merged  : {result['total_items_merged']}")
+        print(f"  Failed batches      : {result['failed_batches'] if result['failed_batches'] else 'none'}")
+        print("=" * 60)
+    finally:
+        spark.stop()
 
 
 if __name__ == "__main__":

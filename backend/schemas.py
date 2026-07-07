@@ -63,3 +63,22 @@ class HealthHistoryEntry(BaseModel):
 class HealthHistoryResponse(BaseModel):
     table_name: str
     history: list[HealthHistoryEntry]
+
+
+class SimulationRequest(BaseModel):
+    num_batches: int = 70
+    num_updates_per_batch: int = 10
+    num_new_orders_per_batch: int = 5
+
+class SimulationResponse(BaseModel):
+    batches_run: int
+    total_orders_merged: int
+    total_items_merged: int
+    failed_batches: list[int]
+
+class WatermarkResponse(BaseModel):
+    source_name: str
+    last_loaded_at: str | None
+
+class ResetResponse(BaseModel):
+    message: str
