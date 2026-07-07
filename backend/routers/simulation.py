@@ -40,7 +40,7 @@ def get_current_watermark(source: str = "fact_orders"):
         conn = get_connection()
         cur = conn.cursor()
         cur.execute(
-            "SELECT last_loaded_at FROM raw.pipeline_watermark WHERE source_name = %s",
+            "SELECT updated_at FROM raw.pipeline_watermark WHERE source_name = %s",
             (source,)
         )
         row = cur.fetchone()

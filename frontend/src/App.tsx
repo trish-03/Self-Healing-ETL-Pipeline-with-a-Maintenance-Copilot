@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { useAtom } from 'jotai';
 import { 
   LayoutDashboard, 
@@ -15,7 +15,9 @@ import {
   ChevronRight,
   Database,
   Moon,
-  Sun
+  Sun,
+  PlaySquare,
+  RefreshCw
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 
@@ -23,16 +25,25 @@ import { activeTableAtom, themeAtom } from './store/uiState';
 import { useTableHealth, useTableHealthHistory } from './hooks/useLakehouseData';
 import CopilotChat from './components/copilotChat';
 
+import SimulationControl from './components/SimulationControl';
+
+
 const queryClient = new QueryClient();
 
 function DashboardContent() {
-  const [currentView, setCurrentView] = useState<'dashboard' | 'metrics' | 'full_chat'>('dashboard');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'metrics' | 'simulation' | 'full_chat'>('dashboard');
   const [isCopilotOpen, setIsCopilotOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [theme, setTheme] = useAtom(themeAtom);
   const [activeTable, setActiveTable] = useAtom(activeTableAtom);
   const { data: health, isLoading } = useTableHealth(activeTable);
   const { data: healthHistory } = useTableHealthHistory(activeTable);
+  const queryClient = useQueryClient();
+
+  const handleRefresh = () => {
+    queryClient.invalidateQueries({ queryKey: ['tableHealth', activeTable] });
+    queryClient.invalidateQueries({ queryKey: ['tableHealthHistory', activeTable] });
+  };
 
   // Apply/remove the 'dark' class on the root element whenever theme changes,
   // so Tailwind's dark: variants activate throughout the whole tree.
@@ -51,6 +62,7 @@ function DashboardContent() {
   // pairs would otherwise introduce.
   const chartData = (healthHistory?.history ?? [])
     .filter(h => h.event_type === 'health_check')
+    .slice(-30)
     .map((h) => ({
       batch: new Date(h.checked_at).toLocaleString(undefined, {
         month: 'short',
@@ -76,6 +88,13 @@ function DashboardContent() {
 
         <div>
           <div className={`p-6 border-b border-slate-200 dark:border-slate-800 flex items-center gap-3 ${isSidebarCollapsed ? 'justify-center' : ''}`}>
+            <button
+              onClick={handleRefresh}
+              className="p-2 rounded-lg text-slate-500 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+              title="Refresh metrics and chart"
+            >
+              <RefreshCw size={16} />
+            </button>
             <div className="p-2 bg-[#226b4d]/10 rounded-lg shrink-0">
               <Server className="text-[#226b4d] h-5 w-5" />
             </div>
@@ -103,6 +122,14 @@ function DashboardContent() {
               <Activity size={16} />
               {!isSidebarCollapsed && <span>Storage Analytics</span>}
             </button>
+
+            <button
+                onClick={() => setCurrentView('simulation')}
+                className={`w-full flex items-center rounded-lg text-xs font-semibold tracking-wide transition ${isSidebarCollapsed ? 'justify-center p-2.5' : 'px-4 py-2.5 gap-3'} ${currentView === 'simulation' ? 'bg-[#226b4d] text-white shadow' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+              >
+                <PlaySquare size={16} />
+                {!isSidebarCollapsed && <span>Simulation Control</span>}
+              </button>
 
             <button
               onClick={() => { setCurrentView('full_chat'); setIsCopilotOpen(false); }}
@@ -252,6 +279,8 @@ function DashboardContent() {
               </ul>
             </div>
           )}
+
+          {currentView === 'simulation' && <SimulationControl />}
 
           {currentView === 'full_chat' && (
             <div className="w-full h-full min-h-[500px] border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xl bg-white dark:bg-[#111827]">

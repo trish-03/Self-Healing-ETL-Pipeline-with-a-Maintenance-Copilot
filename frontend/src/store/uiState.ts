@@ -1,19 +1,23 @@
 import { atom } from 'jotai';
 import { atomWithStorage } from 'jotai/utils';
 
-export interface Message {
+export interface PendingAction {
+  confirmationType: 'optimize' | 'orphans';
+  targetTable: string;
+}
+
+export interface ChatMessage {
   id: string;
   sender: 'user' | 'assistant' | 'system';
   text: string;
   timestamp: Date;
   requiresConfirmation?: boolean;
-  confirmationType?: 'optimize' | 'orphans';
-  targetTable?: string;
+  pendingActions?: PendingAction[];
 }
 
 export const activeTableAtom = atom<string>('fact_orders');
 export const chatInputAtom = atom<string>('');
-export const chatHistoryAtom = atom<Message[]>([
+export const chatHistoryAtom = atom<ChatMessage[]>([
   {
     id: 'initial-system',
     sender: 'assistant',
