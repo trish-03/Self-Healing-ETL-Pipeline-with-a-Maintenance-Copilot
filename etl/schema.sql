@@ -89,3 +89,17 @@ CREATE TABLE IF NOT EXISTS raw.table_health_history (
 
 CREATE INDEX IF NOT EXISTS idx_health_history_table_time
     ON raw.table_health_history (table_name, checked_at);
+
+
+CREATE TABLE IF NOT EXISTS raw.occ_conflict_log (
+    id                SERIAL PRIMARY KEY,
+    table_name        TEXT NOT NULL,
+    writer_id         INTEGER NOT NULL,
+    attempted_at      TIMESTAMP NOT NULL DEFAULT now(),
+    outcome           TEXT NOT NULL CHECK (outcome IN ('committed', 'conflict_failed')),
+    error_type        TEXT,
+    error_message     TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_occ_conflict_log_table_time
+    ON raw.occ_conflict_log (table_name, attempted_at);
