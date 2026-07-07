@@ -51,6 +51,7 @@ function DashboardContent() {
   // pairs would otherwise introduce.
   const chartData = (healthHistory?.history ?? [])
     .filter(h => h.event_type === 'health_check')
+    .slice(-30)
     .map((h) => ({
       batch: new Date(h.checked_at).toLocaleString(undefined, {
         month: 'short',

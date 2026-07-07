@@ -76,12 +76,16 @@ export function useRemoveOrphans() {
   });
 }
 
+export interface PendingAction {
+  confirmationType: 'optimize' | 'orphans';
+  targetTable: string;
+}
+
 export interface ChatResponse {
   sender: 'user' | 'assistant' | 'system';
   text: string;
   requiresConfirmation?: boolean;
-  confirmationType?: 'optimize' | 'orphans';
-  targetTable?: string;
+  pendingActions?: PendingAction[];
 }
 
 export function useAgentChat() {
