@@ -2,7 +2,7 @@ from fastapi import FastAPI
 
 from backend.dependencies import lifespan
 from backend.config.cors import setup_cors
-from backend.routers import health, maintenance, orphans, simulation, chat, occ
+from backend.routers import health, maintenance, orphans, simulation, chat, occ, notifications
 
 app = FastAPI(
     title="Lakehouse Maintenance Copilot Backend",
@@ -18,3 +18,4 @@ app.include_router(orphans.router)
 app.include_router(simulation.router)
 app.include_router(chat.router)
 app.include_router(occ.router)
+app.include_router(notifications.router)
