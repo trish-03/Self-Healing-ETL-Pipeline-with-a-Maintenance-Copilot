@@ -16,7 +16,7 @@ export interface TableMetrics {
 
 export interface TableHealthResponse {
   table_name: string;
-  status: 'HEALTHY' | 'FRAGMENTED';
+  status: 'HEALTHY' | 'FRAGMENTED' | 'UNKNOWN';
   metrics: TableMetrics;
 }
 
@@ -118,7 +118,7 @@ export interface HealthHistoryResponse {
   history: HealthHistoryEntry[];
 }
 
-export function useTableHealthHistory(tableName: string, limit: number = 100) {
+export function useTableHealthHistory(tableName: string, limit: number = 250) {
   return useQuery<HealthHistoryResponse>({
     queryKey: ['tableHealthHistory', tableName],
     queryFn: async () => {

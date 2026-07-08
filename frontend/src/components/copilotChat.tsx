@@ -1,4 +1,3 @@
-import React from 'react';
 import { useAtom } from 'jotai';
 import { Send, ShieldAlert, Bot } from 'lucide-react';
 import { chatHistoryAtom, chatInputAtom } from '../store/uiState';
@@ -69,9 +68,6 @@ export default function CopilotChat({ tableName }: { tableName: string }) {
         }]);
       }
 
-      // Remove the completed action from the originating message's
-      // pendingActions list, so its button disappears once handled --
-      // the other tables in the same batch remain actionable.
       setMessages(prev => prev.map(m =>
         m.id === messageId
           ? { ...m, pendingActions: m.pendingActions?.filter(a => a.targetTable !== target) }
