@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { useAtom } from 'jotai';
 import { 
@@ -17,11 +17,13 @@ import {
   Moon,
   Sun,
   PlaySquare,
-  RefreshCw
+  RefreshCw,
+  Bell,
+  ArrowRight
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 
-import { activeTableAtom, themeAtom } from './store/uiState';
+import { activeTableAtom, chatHistoryAtom, themeAtom } from './store/uiState';
 import { useTableHealth, useTableHealthHistory } from './hooks/useLakehouseData';
 import CopilotChat from './components/copilotChat';
 
@@ -33,9 +35,11 @@ const queryClient = new QueryClient();
 function DashboardContent() {
   const [currentView, setCurrentView] = useState<'dashboard' | 'metrics' | 'simulation' | 'full_chat'>('dashboard');
   const [isCopilotOpen, setIsCopilotOpen] = useState(false);
+  const [proactiveAlert, setProactiveAlert] = useState<{ text: string; targetTable?: string; alertId?: string } | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [theme, setTheme] = useAtom(themeAtom);
   const [activeTable, setActiveTable] = useAtom(activeTableAtom);
+  const [, setMessages] = useAtom(chatHistoryAtom);
   const { data: health, isLoading } = useTableHealth(activeTable);
   const { data: healthHistory } = useTableHealthHistory(activeTable);
   const queryClient = useQueryClient();
@@ -55,6 +59,56 @@ function DashboardContent() {
     }
   }, [theme]);
 
+  // Listen for background health alerts even when the Copilot drawer is closed.
+  useEffect(() => {
+    const ws = new WebSocket('ws://localhost:8000/api/ws/alerts');
+
+    ws.onmessage = (event) => {
+      try {
+        const incomingAlert = JSON.parse(event.data);
+        if (incomingAlert?.requiresConfirmation) {
+          setMessages((prev) => {
+            const alreadyPresent = incomingAlert.alertId
+              ? prev.some((message) => message.alertId === incomingAlert.alertId)
+              : prev.some((message) => message.text === incomingAlert.text && message.alertId === incomingAlert.alertId);
+            if (alreadyPresent) return prev;
+
+            return [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                alertId: incomingAlert.alertId,
+                sender: incomingAlert.sender || 'assistant',
+                text: incomingAlert.text || 'A background health issue was detected.',
+                timestamp: new Date(),
+                requiresConfirmation: incomingAlert.requiresConfirmation || false,
+                confirmationType: incomingAlert.confirmationType,
+                targetTable: incomingAlert.targetTable,
+                pendingActions: incomingAlert.pendingActions || []
+              }
+            ];
+          });
+
+          setProactiveAlert({
+            text: incomingAlert.text || 'A background health issue was detected.',
+            targetTable: incomingAlert.targetTable,
+            alertId: incomingAlert.alertId,
+          });
+        }
+      } catch (error) {
+        console.error('Error unpacking proactive alert in app shell:', error);
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error('App shell proactive alert stream error:', error);
+    };
+
+    return () => {
+      ws.close();
+    };
+  }, []);
+
   // Real chart data, sourced from raw.table_health_history via
   // /api/health/history -- no mocked/fabricated points.
   // Filtered to plain health_check events so the trend line reflects
@@ -62,7 +116,7 @@ function DashboardContent() {
   // pairs would otherwise introduce.
   const chartData = (healthHistory?.history ?? [])
     .filter(h => h.event_type === 'health_check')
-    .slice(-30)
+    .slice(-90)
     .map((h) => ({
       batch: new Date(h.checked_at).toLocaleString(undefined, {
         month: 'short',
@@ -71,7 +125,7 @@ function DashboardContent() {
         minute: '2-digit'
       }),
       live_files: h.live_file_count ?? 0,
-      delete_files: h.delete_file_count ?? 0,
+      snapshot_count: h.snapshot_count ?? 0,
     }));
 
   return (
@@ -191,16 +245,55 @@ function DashboardContent() {
         </header>
 
         <div className="flex-1 overflow-y-auto p-8">
+          {proactiveAlert && (
+            <div className="mb-6 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-4 shadow-lg backdrop-blur flex items-start gap-3">
+              <div className="rounded-full bg-amber-500/15 p-2 text-amber-400 shrink-0 mt-0.5">
+                <Bell size={16} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-bold text-amber-200">Background health alert detected</p>
+                <p className="text-xs text-amber-100/90 mt-1 whitespace-pre-line">{proactiveAlert.text}</p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => {
+                    setCurrentView('full_chat');
+                    setIsCopilotOpen(false);
+                    setProactiveAlert(null);
+                  }}
+                  className="inline-flex items-center gap-2 rounded-lg bg-amber-400 px-3 py-2 text-[11px] font-black uppercase tracking-widest text-slate-950 hover:bg-amber-300 transition"
+                >
+                  Open Chat
+                  <ArrowRight size={12} />
+                </button>
+                <button
+                  onClick={() => setProactiveAlert(null)}
+                  className="rounded-lg border border-amber-500/30 px-3 py-2 text-[11px] font-bold uppercase tracking-widest text-amber-100 hover:bg-amber-500/10 transition"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          )}
+
           {currentView === 'dashboard' && (
             <div className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
                   <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 p-5 rounded-xl flex items-center justify-between overflow-hidden">
                     <div className="min-w-0">
                       <span className="text-[10px] font-bold tracking-widest text-slate-500 uppercase block mb-1">Table State Status</span>
-                      <span className={`text-base font-extrabold flex items-center gap-1.5 whitespace-nowrap ${health?.status === 'FRAGMENTED' ? 'text-amber-500' : 'text-emerald-500'}`}>
-                        {isLoading ? 'Reading...' : health?.status}
-                        {!isLoading && (health?.status === 'FRAGMENTED' ? <AlertTriangle size={16} className="shrink-0" /> : <CheckCircle2 size={16} className="shrink-0" />)}
-                      </span>
+                       <span className={`text-base font-extrabold flex items-center gap-1.5 whitespace-nowrap ${
+                          health?.status === 'FRAGMENTED' ? 'text-amber-500' :
+                          health?.status === 'UNKNOWN' ? 'text-slate-400' :
+                          'text-emerald-500'
+                         }`}>
+                          {isLoading ? 'Reading...' : health?.status}
+                          {!isLoading && (
+                            health?.status === 'FRAGMENTED' ? <AlertTriangle size={16} className="shrink-0" /> :
+                            health?.status === 'UNKNOWN' ? <AlertTriangle size={16} className="shrink-0 opacity-50" /> :
+                            <CheckCircle2 size={16} className="shrink-0" />
+                          )}
+                       </span>
                     </div>
                   </div>
 
@@ -230,7 +323,7 @@ function DashboardContent() {
                 </div>
               <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 h-96 rounded-xl p-6 flex flex-col">
                 <div className="mb-4">
-                  <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">Small-File Frag & Position Delete Accumulation Trend</h3>
+                  <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">Small-File Frag & Snapshot Accumulation Trend</h3>
                   <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">Real snapshot history from raw.table_health_history -- health checks only, maintenance events excluded from this line.</p>
                 </div>
                 <div className="flex-1 w-full min-h-0">
@@ -246,7 +339,7 @@ function DashboardContent() {
                             <stop offset="5%" stopColor="#6366f1" stopOpacity={0.2}/>
                             <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
                           </linearGradient>
-                          <linearGradient id="colorDeletes" x1="0" y1="0" x2="0" y2="1">
+                          <linearGradient id="colorSnapshots" x1="0" y1="0" x2="0" y2="1">
                             <stop offset="5%" stopColor="#f87171" stopOpacity={0.2}/>
                             <stop offset="95%" stopColor="#f87171" stopOpacity={0}/>
                           </linearGradient>
@@ -256,7 +349,7 @@ function DashboardContent() {
                         <YAxis stroke="#6b7280" fontSize={10} tickLine={false} />
                         <Tooltip contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', borderRadius: '8px', fontSize: '11px', color: '#e2e8f0' }} />
                         <Area type="monotone" dataKey="live_files" name="Live Data Files" stroke="#6366f1" fillOpacity={1} fill="url(#colorLive)" strokeWidth={2} />
-                        <Area type="monotone" dataKey="delete_files" name="Position Deletes" stroke="#f87171" fillOpacity={1} fill="url(#colorDeletes)" strokeWidth={2} />
+                        <Area type="monotone" dataKey="snapshot_count" name="Snapshot Count" stroke="#f87171" fillOpacity={1} fill="url(#colorSnapshots)" strokeWidth={2} />
                       </AreaChart>
                     </ResponsiveContainer>
                   )}

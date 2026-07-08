@@ -1,13 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+import asyncio
 
-from backend.dependencies import get_spark_session
+from backend.dependencies import get_spark_session, spark_busy_lock
 from connection.db_connection import get_connection
 from etl.incremental_load import get_watermark, DEFAULT_WATERMARK
 from etl.simulate_batches import run_simulation_batches
 
 router = APIRouter(prefix="/api", tags=["simulation"])
-
 
 from backend.schemas import (
     SimulationRequest, SimulationResponse,
@@ -15,19 +15,20 @@ from backend.schemas import (
 )
 
 
-
 @router.post("/simulate", response_model=SimulationResponse)
-def run_simulation(payload: SimulationRequest, spark=Depends(get_spark_session)):
-    try:
-        result = run_simulation_batches(
-            spark,
-            num_batches=payload.num_batches,
-            num_updates_per_batch=payload.num_updates_per_batch,
-            num_new_orders_per_batch=payload.num_new_orders_per_batch
-        )
-        return SimulationResponse(**result)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Simulation failed: {str(e)}")
+async def run_simulation(payload: SimulationRequest, spark=Depends(get_spark_session)):
+    async with spark_busy_lock:
+        try:
+            result = await asyncio.to_thread(
+                run_simulation_batches,
+                spark,
+                num_batches=payload.num_batches,
+                num_updates_per_batch=payload.num_updates_per_batch,
+                num_new_orders_per_batch=payload.num_new_orders_per_batch
+            )
+            return SimulationResponse(**result)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Simulation failed: {str(e)}")
 
 
 @router.get("/watermark", response_model=WatermarkResponse)

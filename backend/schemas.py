@@ -23,7 +23,7 @@ class HealthMetrics(BaseModel):
 
 class TableHealthResponse(BaseModel):
     table_name: str
-    status: str = Field(description="Will be 'HEALTHY' or 'FRAGMENTED' based on thresholds")
+    status: str = Field(description="Will be 'HEALTHY', 'FRAGMENTED', or 'UNKNOWN' if metric collection failed")
     metrics: HealthMetrics
 
 class MaintenanceRequest(BaseModel):
