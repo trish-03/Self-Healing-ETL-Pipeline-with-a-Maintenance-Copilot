@@ -103,3 +103,10 @@ CREATE TABLE IF NOT EXISTS raw.occ_conflict_log (
 
 CREATE INDEX IF NOT EXISTS idx_occ_conflict_log_table_time
     ON raw.occ_conflict_log (table_name, attempted_at);
+
+CREATE TABLE IF NOT EXISTS raw.fact_inventory_occ (
+    id           BIGINT,      -- surrogate PK
+    item_id      TEXT,      -- natural key, conflict target
+    quantity     INT,
+    updated_at   TIMESTAMP
+);
