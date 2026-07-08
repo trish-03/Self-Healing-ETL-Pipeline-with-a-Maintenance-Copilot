@@ -11,6 +11,8 @@ export interface ChatMessage {
   sender: 'user' | 'assistant' | 'system';
   text: string;
   timestamp: Date;
+  alertId?: string;
+  targetTable?: string;
   requiresConfirmation?: boolean;
   pendingActions?: PendingAction[];
 }
