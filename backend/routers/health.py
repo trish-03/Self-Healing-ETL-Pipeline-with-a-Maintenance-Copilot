@@ -30,11 +30,24 @@ def _to_health_metrics(raw_health) -> HealthMetrics:
     )
 
 
+def _collection_failed(raw_health) -> bool:
+    """
+    True if the core metrics needed for a fragmentation verdict never
+    actually collected -- distinct from a genuinely healthy table with
+    zero files. A None here means "unknown," and must never be silently
+    coerced into "healthy" by any caller.
+    """
+    return raw_health.live_file_count is None or raw_health.average_file_size_bytes is None
+
+
 def _is_fragmented(metrics: HealthMetrics) -> bool:
     """
     Single source of truth for the fragmentation verdict, reusing the
     exact thresholds compaction.py uses for the standalone script.
-    Do not redeclare these thresholds elsewhere.
+    Do not redeclare these thresholds elsewhere. Callers MUST check
+    _collection_failed() on the raw report before trusting this --
+    it operates on already-coerced-to-zero metrics and cannot itself
+    distinguish "zero files" from "unknown."
     """
     return (
         metrics.live_file_count > FILE_COUNT_THRESHOLD
@@ -48,7 +61,11 @@ def check_table_health(table: str, spark=Depends(get_spark_session)):
     try:
         raw_health = get_table_health(spark, table)
         metrics = _to_health_metrics(raw_health)
-        status = "FRAGMENTED" if _is_fragmented(metrics) else "HEALTHY"
+
+        if _collection_failed(raw_health):
+            status = "UNKNOWN"
+        else:
+            status = "FRAGMENTED" if _is_fragmented(metrics) else "HEALTHY"
 
         return TableHealthResponse(
             table_name=table,

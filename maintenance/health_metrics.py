@@ -389,16 +389,17 @@ def get_table_health(spark, table_name: str, event_type: str = "health_check") -
 
     # ---------------- Layout ----------------
 
-    report.partition_file_counts = (
-        _safe_metric(
-            errors,
-            "partition_file_counts",
-            lambda: partition_file_counts(spark, full_table_name)
-        )
-        or []
+    # Skip logging entirely if the core metrics never collected -- a row
+    # with nothing but nulls carries no information and only pollutes
+    # the history the dashboard chart and scheduler both read from.
+    core_metrics_all_failed = (
+        report.live_file_count is None
+        and report.average_file_size_bytes is None
+        and report.snapshot_count is None
     )
 
-    _log_health_snapshot(report, event_type=event_type)
+    if not core_metrics_all_failed:
+        _log_health_snapshot(report, event_type=event_type)
 
     return report
 
