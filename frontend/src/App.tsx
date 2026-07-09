@@ -19,7 +19,8 @@ import {
   PlaySquare,
   RefreshCw,
   Bell,
-  ArrowRight
+  ArrowRight,
+  ShieldAlert
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 
@@ -28,12 +29,13 @@ import { useTableHealth, useTableHealthHistory } from './hooks/useLakehouseData'
 import CopilotChat from './components/copilotChat';
 
 import SimulationControl from './components/SimulationControl';
+import OCCControl from './components/OCCControl';
 
 
 const queryClient = new QueryClient();
 
 function DashboardContent() {
-  const [currentView, setCurrentView] = useState<'dashboard' | 'metrics' | 'simulation' | 'full_chat'>('dashboard');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'metrics' | 'simulation' | 'occ' | 'full_chat'>('dashboard');
   const [isCopilotOpen, setIsCopilotOpen] = useState(false);
   const [proactiveAlert, setProactiveAlert] = useState<{ text: string; targetTable?: string; alertId?: string } | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -184,6 +186,14 @@ function DashboardContent() {
                 <PlaySquare size={16} />
                 {!isSidebarCollapsed && <span>Simulation Control</span>}
               </button>
+
+            <button
+              onClick={() => setCurrentView('occ')}
+              className={`w-full flex items-center rounded-lg text-xs font-semibold tracking-wide transition ${isSidebarCollapsed ? 'justify-center p-2.5' : 'px-4 py-2.5 gap-3'} ${currentView === 'occ' ? 'bg-[#226b4d] text-white shadow' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+            >
+              <ShieldAlert size={16} />
+              {!isSidebarCollapsed && <span>OCC Demo</span>}
+            </button>
 
             <button
               onClick={() => { setCurrentView('full_chat'); setIsCopilotOpen(false); }}
@@ -374,6 +384,8 @@ function DashboardContent() {
           )}
 
           {currentView === 'simulation' && <SimulationControl />}
+
+          {currentView === 'occ' && <OCCControl />}
 
           {currentView === 'full_chat' && (
             <div className="w-full h-full min-h-[500px] border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xl bg-white dark:bg-[#111827]">
