@@ -1,8 +1,8 @@
 import json
 from openai import OpenAI
 from config.config import GROQ_API_KEY
-from backend.mcp_client import get_mcp_session
-
+from backend.mcp.client import get_mcp_session
+from backend.mcp.prompts import SYSTEM_INSTRUCTION
 client = OpenAI(
     api_key=GROQ_API_KEY,
     base_url="https://api.groq.com/openai/v1"
@@ -17,26 +17,23 @@ MODEL_NAME = "llama-3.3-70b-versatile"
 # actually call a tool rather than narrate the action in prose -- this is
 # what previously let it hallucinate an entire maintenance run without
 # ever calling optimize_lakehouse_table.
-ACTION_VERBS = ("optimize", "compact", "clean", "orphan", "remove")
-
-KNOWN_TABLES = {"fact_orders", "fact_order_items"}
-
-SYSTEM_INSTRUCTION = (
-    "You are a strict Data Engineering Maintenance Copilot specializing in Apache Iceberg tables. "
-    "You have access to tools that check table health, run optimizations, and remove orphan files. "
-    "When the input starts with [SYSTEM_EVENT], treat it as an automated background alert and respond with "
-    "a clear plain-English explanation of the table's condition, the observed metrics, and the recommended "
-    "next step. Do not answer with only a terse action label. "
-    "There are exactly two tables: fact_orders and fact_order_items. "
-    "If the user asks about 'both tables', 'all tables', or otherwise refers to more than one table, "
-    "call the appropriate tool once per table in the same turn, with the correct table_name for each. "
-    "CRITICAL RULE: Never claim an action was performed, initiated, or completed unless you actually "
-    "called the corresponding tool in this turn. Never invent metrics, orphan files, or results that "
-    "did not come from a real tool response. "
-    "CRITICAL GUARDRAIL: If the user asks to 'optimize', 'compact', 'clean', or 'remove orphans', "
-    "call the appropriate tool with confirmed=false rather than describing it in prose -- the system "
-    "handles asking the user for confirmation, you do not need to ask them yourself."
+ACTION_VERBS = (
+    "optimize",
+    "compact",
+    "clean",
+    "orphan",
+    "remove",
+    "run",
+    "simulate",
+    "demonstrate",
+    "test",
 )
+
+KNOWN_TABLES = {
+    "fact_orders",
+    "fact_order_items",
+    "fact_inventory",
+}
 
 
 def _mcp_tool_to_openai_schema(mcp_tool) -> dict:

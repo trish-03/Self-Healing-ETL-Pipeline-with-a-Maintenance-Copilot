@@ -9,7 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from connection.spark_session import get_spark
-from backend.mcp_client import start_mcp_session, stop_mcp_session
+from backend.mcp.client import start_mcp_session, stop_mcp_session
 from maintenance.health_metrics import get_table_health
 
 # ----------------------------------------------------------------------
@@ -76,7 +76,7 @@ async def check_table_health_job():
     """
     from backend.routers.health import _to_health_metrics, _is_fragmented, _collection_failed
     from backend.routers.chat import chat_sessions
-    from backend.agent import run_agent_turn
+    from backend.mcp.agent import run_agent_turn
 
     if not spark_state.session:
         return

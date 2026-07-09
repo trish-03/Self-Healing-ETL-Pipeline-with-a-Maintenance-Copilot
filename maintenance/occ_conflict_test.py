@@ -1,102 +1,42 @@
-import os
-import sys
-import shutil
-import subprocess
-from pathlib import Path
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from connection.db_connection import get_connection
-
-BARRIER_DIR = Path("/tmp/occ_barrier")
-
-
-def run_writer(writer_id, delay_seconds):
-    return subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "maintenance.occ_writer",
-            str(writer_id),
-            str(delay_seconds),
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-
-
-def print_recent_conflict_log(limit=5):
-    conn = get_connection()
-    cur = conn.cursor()
-
-    cur.execute(
-        """
-        SELECT writer_id,
-               attempted_at,
-               outcome,
-               error_type
-        FROM raw.occ_conflict_log
-        ORDER BY attempted_at DESC
-        LIMIT %s
-        """,
-        (limit,),
-    )
-
-    rows = cur.fetchall()
-
-    cur.close()
-    conn.close()
-
-    print("\nRecent occ_conflict_log entries")
-    print("-" * 70)
-
-    for row in rows:
-        print(
-            f"writer={row[0]} | "
-            f"time={row[1]} | "
-            f"outcome={row[2]} | "
-            f"error={row[3]}"
-        )
+from maintenance.occ_service import run_occ_demo
 
 
 def main():
 
-    # Clean barrier from previous run
-    if BARRIER_DIR.exists():
-        shutil.rmtree(BARRIER_DIR)
+    print("\nLaunching concurrent inventory writers...\n")
 
-    print("Launching concurrent inventory writers...\n")
-
-    writer1 = run_writer(1, 0)
-    writer2 = run_writer(2, 0)
-
-    out1, err1 = writer1.communicate()
-    out2, err2 = writer2.communicate()
+    result = run_occ_demo()
 
     print("=" * 70)
-    print("Writer 1")
+    print("SUMMARY")
     print("=" * 70)
-    print(out1)
 
-    if err1:
-        print(err1)
+    print(result["summary"])
 
-    print("=" * 70)
-    print("Writer 2")
-    print("=" * 70)
-    print(out2)
+    for writer in result["writers"]:
 
-    if err2:
-        print(err2)
+        print("=" * 70)
+        print(f"Writer {writer['writer_id']}")
+        print("=" * 70)
 
-    print_recent_conflict_log()
+        print(writer["stdout"])
 
-    print(
-        "\nIf OCC worked correctly, one writer should commit and "
-        "the other should fail with a CommitFailedException "
-        "(or similar Iceberg commit conflict)."
-    )
+        if writer["stderr"]:
+            print(writer["stderr"])
+
+        print(f"Exit Code: {writer['exit_code']}")
+
+    print("\nRecent OCC Log")
+    print("-" * 70)
+
+    for conflict in result["conflicts"]:
+
+        print(
+            f"Writer={conflict['writer_id']} | "
+            f"Outcome={conflict['outcome']} | "
+            f"Time={conflict['attempted_at']} | "
+            f"Error={conflict['error_type']}"
+        )
 
 
 if __name__ == "__main__":

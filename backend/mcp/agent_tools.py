@@ -1,4 +1,5 @@
 import httpx
+import json
 from mcp.server import FastMCP
 from pydantic import BaseModel, Field
 
@@ -146,6 +147,148 @@ async def remove_orphan_lakehouse_files(table_name: str, confirmed: bool) -> str
             )
         except Exception as e:
             return f"Spark Execution Pipeline Error: {str(e)}"
+
+
+
+# ----------------------------------------------------------------------
+# Tool 4: Apache Iceberg OCC Demonstration
+# ----------------------------------------------------------------------
+
+@mcp_server.tool()
+async def run_occ_demo() -> str:
+    """
+    Executes a real Apache Iceberg Optimistic Concurrency Control (OCC)
+    demonstration using two concurrent writers.
+
+    Use this tool whenever the user asks to:
+
+    - run the OCC demo
+    - demonstrate optimistic concurrency
+    - simulate concurrent writers
+    - verify Iceberg conflict detection
+    - test OCC
+
+    This executes a real backend workflow rather than explaining a
+    hypothetical example.
+    """
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+
+        try:
+
+            response = await client.post(
+                f"{FASTAPI_URL}/occ/run"
+            )
+
+            if response.status_code != 200:
+                return (
+                    f"Backend returned {response.status_code}\n\n"
+                    f"{response.text}"
+                )
+
+            data = response.json()
+
+            output = []
+
+            output.append("Apache Iceberg OCC Demonstration")
+            output.append("=" * 45)
+
+            output.append("\nWriter 1 Output\n")
+            output.append(data.get("writer1_stdout", ""))
+
+            if data.get("writer1_stderr"):
+                output.append("\nWriter 1 Errors\n")
+                output.append(data["writer1_stderr"])
+
+            output.append("\nWriter 2 Output\n")
+            output.append(data.get("writer2_stdout", ""))
+
+            if data.get("writer2_stderr"):
+                output.append("\nWriter 2 Errors\n")
+                output.append(data["writer2_stderr"])
+
+            output.append("\nConflict Log\n")
+
+            conflicts = data.get("conflicts", [])
+
+            if not conflicts:
+                output.append("No conflicts recorded.")
+
+            else:
+
+                for conflict in conflicts:
+
+                    output.append(
+                        (
+                            f"- Writer {conflict['writer_id']} | "
+                            f"{conflict['attempted_at']} | "
+                            f"{conflict['outcome']} | "
+                            f"{conflict['error_type']}"
+                        )
+                    )
+
+            return "\n".join(output)
+
+        except Exception as e:
+
+            return f"OCC demonstration failed:\n{e}"
+
+# ----------------------------------------------------------------------
+# Tool 5: OCC Conflict History
+# ----------------------------------------------------------------------
+
+@mcp_server.tool()
+async def get_occ_history(limit: int = 10) -> str:
+    """
+    Retrieves previously recorded OCC conflict history.
+
+    Use this when the user asks:
+
+    - show previous OCC runs
+    - inspect conflict history
+    - explain recent conflicts
+    - view OCC log
+    """
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+
+        try:
+
+            response = await client.get(
+                f"{FASTAPI_URL}/occ/conflicts",
+                params={"limit": limit}
+            )
+
+            if response.status_code != 200:
+                return response.text
+
+            data = response.json()
+
+            if data["count"] == 0:
+                return "No OCC conflicts have been recorded."
+
+            lines = []
+
+            lines.append(
+                f"Showing {data['count']} recent OCC conflict records\n"
+            )
+
+            for conflict in data["conflicts"]:
+
+                lines.append(
+                    (
+                        f"Writer {conflict['writer_id']} | "
+                        f"{conflict['attempted_at']} | "
+                        f"{conflict['outcome']} | "
+                        f"{conflict['error_type']}"
+                    )
+                )
+
+            return "\n".join(lines)
+
+        except Exception as e:
+
+            return f"Unable to retrieve OCC history:\n{e}"
 
 
 if __name__ == "__main__":
