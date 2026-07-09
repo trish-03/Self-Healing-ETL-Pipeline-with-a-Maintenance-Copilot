@@ -1,81 +1,124 @@
-import sys
 import os
+import sys
+import time
+from pathlib import Path
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import time
 from connection.spark_session import get_spark
 from connection.db_connection import get_connection
 from config.config import CATALOG_NAME
 
+TABLE_NAME = "fact_inventory"
+ICEBERG_TABLE = f"{CATALOG_NAME}.warehouse.{TABLE_NAME}"
+TARGET_INVENTORY_ID = "INV00001"
 
-def _log_conflict_result(table_name, writer_id, outcome, error_type=None, error_message=None):
-    """
-    Records one commit attempt's outcome to raw.occ_conflict_log.
-    """
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO raw.occ_conflict_log (table_name, writer_id, outcome, error_type, error_message)
-            VALUES (%s, %s, %s, %s, %s)
-        """, (table_name, writer_id, outcome, error_type, error_message))
-        conn.commit()
-        cur.close()
-        conn.close()
-    except Exception as e:
-        print(f"  [WARN] Failed to log conflict result: {e}")
+BARRIER_DIR = Path("/tmp/occ_barrier")
+
+
+def log_result(writer_id, outcome, error_type=None, error_message=None):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        INSERT INTO raw.occ_conflict_log
+        (table_name, writer_id, outcome, error_type, error_message)
+        VALUES (%s, %s, %s, %s, %s)
+        """,
+        (
+            TABLE_NAME,
+            writer_id,
+            outcome,
+            error_type,
+            error_message,
+        ),
+    )
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def wait_for_other_writer(writer_id):
+    BARRIER_DIR.mkdir(exist_ok=True)
+
+    my_file = BARRIER_DIR / f"writer_{writer_id}.ready"
+    my_file.touch()
+
+    other_writer = 2 if writer_id == 1 else 1
+    other_file = BARRIER_DIR / f"writer_{other_writer}.ready"
+
+    print(f"Writer {writer_id}: waiting for Writer {other_writer}...")
+
+    while not other_file.exists():
+        time.sleep(0.1)
+
+    print(f"Writer {writer_id}: both writers ready.")
 
 
 def main(writer_id: int, delay_seconds: float):
+
     time.sleep(delay_seconds)
 
     spark = get_spark(f"OCCWriter{writer_id}")
-    table_name = "fact_orders"
-    full_table_name = f"{CATALOG_NAME}.warehouse.{table_name}"
 
     try:
-        # CORRECTED: Disable retries safely at the isolated Spark Session level.
-        # This prevents the writers from colliding on metadata ALTER TABLE locks.
-        spark.conf.set(f"spark.sql.catalog.{CATALOG_NAME}.commit.retry.num-retries", "0")
+        # Read current snapshot
+        df = spark.table(ICEBERG_TABLE)
 
-        # ON CONFLICT-safe insert first, so the row exists regardless of order.
-        spark.sql(f"""
-            MERGE INTO {full_table_name} t
-            USING (SELECT 'ORD-TESTCONFLICT' AS order_id) s
-            ON t.order_id = s.order_id
-            WHEN NOT MATCHED THEN INSERT (order_id, status)
-                VALUES (s.order_id, 'pending')
-        """)
+        # Force Spark to materialize the snapshot now
+        df.cache()
+        df.count()
 
-        # STRATEGY: Swell the dataset size using a UNION ALL with a range generator.
-        # Even under Merge-on-Read, this forces Spark to generate and flush physical 
-        # Parquet files to disk before the final catalog metadata commit is attempted.
-        spark.sql(f"""
-            MERGE INTO {full_table_name} t
+        df.createOrReplaceTempView("inventory_snapshot")
+
+        # Wait until both writers have read the same snapshot
+        wait_for_other_writer(writer_id)
+
+        spark.sql(
+            f"""
+            MERGE INTO {ICEBERG_TABLE} t
             USING (
-                SELECT 'ORD-TESTCONFLICT' AS order_id, 'confirmed' AS status
-                UNION ALL
-                SELECT CONCAT('DUMMY-', CAST(id AS STRING)) AS order_id, 'pending' AS status
-                FROM range(1, 100000)
+                SELECT
+                    inventory_id,
+                    sku_code,
+                    warehouse_id,
+                    quantity + 10 AS quantity,
+                    current_timestamp() AS updated_at
+                FROM inventory_snapshot
+                WHERE inventory_id = '{TARGET_INVENTORY_ID}'
             ) s
-            ON t.order_id = s.order_id
-            WHEN MATCHED THEN UPDATE SET t.status = s.status
-            WHEN NOT MATCHED THEN INSERT (order_id, status) VALUES (s.order_id, s.status)
-        """)
+            ON t.inventory_id = s.inventory_id
+
+            WHEN MATCHED THEN
+                UPDATE SET
+                    quantity = s.quantity,
+                    updated_at = s.updated_at
+            """
+        )
 
         print(f"Writer {writer_id}: COMMIT SUCCEEDED")
-        _log_conflict_result(table_name, writer_id, "committed")
+
+        log_result(writer_id, "committed")
 
     except Exception as e:
-        error_type = type(e).__name__
-        error_message = str(e)[:1000]
-        print(f"Writer {writer_id}: COMMIT FAILED -- {error_type}: {error_message[:300]}")
-        _log_conflict_result(table_name, writer_id, "conflict_failed", error_type, error_message)
+
+        print(f"\nWriter {writer_id}: COMMIT FAILED")
+        print(type(e).__name__)
+        print(str(e))
+
+        log_result(
+            writer_id,
+            "conflict_failed",
+            type(e).__name__,
+            str(e)[:1000],
+        )
 
     finally:
+
         spark.stop()
 
 
 if __name__ == "__main__":
-    # Robustly fetch arguments passed by the test harness
     main(int(sys.argv[1]), float(sys.argv[2]))
