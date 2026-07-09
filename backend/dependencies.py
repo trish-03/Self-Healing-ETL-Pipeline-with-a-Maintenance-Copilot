@@ -164,7 +164,7 @@ async def lifespan(app: FastAPI):
     await start_mcp_session()
 
     print("Starting APScheduler Autonomous Monitoring Framework...")
-    scheduler.add_job(check_table_health_job, 'interval', seconds=60, id='iceberg_health_check')
+    scheduler.add_job(check_table_health_job, 'interval', seconds=300, id='iceberg_health_check')
     scheduler.start()
 
     yield

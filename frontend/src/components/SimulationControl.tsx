@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { PlayCircle, Clock, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { useWatermark, useRunSimulation } from '../hooks/useLakehouseData';
 

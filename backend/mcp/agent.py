@@ -158,7 +158,12 @@ async def run_agent_turn(message_history: list, active_table: str, current_user_
 
     for tool_call in choice.tool_calls:
         tool_name = tool_call.function.name
-        tool_args = json.loads(tool_call.function.arguments)
+        tool_args = json.loads(tool_call.function.arguments or "{}") or {}
+
+        print("TOOL:", tool_name)
+        print("RAW ARGS:", tool_call.function.arguments)
+        print("PARSED:", tool_args)
+        print(type(tool_args))
 
         # Each call carries its own table_name now -- this is what allows
         # "check/optimize both tables" to work in a single turn, rather
