@@ -17,9 +17,23 @@ MODEL_NAME = "llama-3.3-70b-versatile"
 # actually call a tool rather than narrate the action in prose -- this is
 # what previously let it hallucinate an entire maintenance run without
 # ever calling optimize_lakehouse_table.
-ACTION_VERBS = ("optimize", "compact", "clean", "orphan", "remove")
+ACTION_VERBS = (
+    "optimize",
+    "compact",
+    "clean",
+    "orphan",
+    "remove",
+    "run",
+    "simulate",
+    "demonstrate",
+    "test",
+)
 
-KNOWN_TABLES = {"fact_orders", "fact_order_items"}
+KNOWN_TABLES = {
+    "fact_orders",
+    "fact_order_items",
+    "fact_inventory",
+}
 
 
 def _mcp_tool_to_openai_schema(mcp_tool) -> dict:

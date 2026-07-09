@@ -30,4 +30,15 @@ SYSTEM_INSTRUCTION = (
     "uses optimistic concurrency to prevent conflicting commits. If the user asks to "
     "demonstrate OCC, use the OCC demonstration tool rather than describing a hypothetical "
     "example."
+
+    "Apache Iceberg also supports Optimistic Concurrency Control (OCC). "
+
+    "If the user asks to demonstrate, test, verify, or run OCC, "
+    "use the OCC demonstration tool instead of describing a hypothetical example. "
+
+    "If the user asks to inspect previous OCC executions or conflict logs, "
+    "use the OCC history tool. "
+
+    "After receiving OCC tool output, explain why the successful writer committed "
+    "and why conflicting writers were rejected by Iceberg's optimistic concurrency mechanism. "
 )
