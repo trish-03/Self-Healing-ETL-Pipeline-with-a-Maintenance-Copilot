@@ -26,7 +26,7 @@ async def start_mcp_session():
     """
     server_params = StdioServerParameters(
         command=sys.executable,
-        args=["-m", "backend.agent_tools"],
+        args=["-m", "backend.mcp.agent_tools"],
     )
 
     mcp_state._exit_stack = AsyncExitStack()
