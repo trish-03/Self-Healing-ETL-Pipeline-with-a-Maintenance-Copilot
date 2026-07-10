@@ -1,21 +1,15 @@
 import { Database, FileStack, FileWarning, Layers } from 'lucide-react';
 import type { TableHealthResponse } from '../../hooks/useTableHealth';
+import type { HealthHistoryEntry } from '../../hooks/useTableHealth';
+import MaintenanceHistoryPanel from './MaintenanceHistoryPanel';
 
 interface StorageAnalyticsProps {
   activeTable: string;
   health: TableHealthResponse | undefined;
+  history: HealthHistoryEntry[] | undefined;
 }
 
-// Table-level architectural facts that aren't derivable from live metrics --
-// these reflect actual design decisions made in initial_load.py / MoR migration,
-// not something inferred at runtime.
-const TABLE_WRITE_MODE: Record<string, string> = {
-  fact_orders: 'Merge-on-Read (MoR)',
-  fact_order_items: 'Copy-on-Write (CoW) -- pure insert workload',
-  fact_inventory: 'Copy-on-Write (CoW) -- OCC-guarded updates',
-};
-
-export default function StorageAnalytics({ activeTable, health }: StorageAnalyticsProps) {
+export default function StorageAnalytics({ activeTable, health, history }: StorageAnalyticsProps) {
   const metrics = health?.metrics;
 
   const rows = [
@@ -87,6 +81,7 @@ export default function StorageAnalytics({ activeTable, health }: StorageAnalyti
         <h3 className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">
           Layout & Write Mode
         </h3>
+        <MaintenanceHistoryPanel history={history} />
         <ul className="list-disc pl-5 space-y-1 text-slate-600 dark:text-slate-300 font-mono text-[11px]">
           <li>Logical Model Definition: Unpartitioned Append Target Mode</li>
           <li>

@@ -105,7 +105,7 @@ function DashboardContent() {
           )}
 
           {currentView === 'metrics' && (
-            <StorageAnalytics activeTable={activeTable} health={health} />
+            <StorageAnalytics activeTable={activeTable} health={health} history={healthHistory?.history} />
           )}
 
           {currentView === 'simulation' && <SimulationControl />}

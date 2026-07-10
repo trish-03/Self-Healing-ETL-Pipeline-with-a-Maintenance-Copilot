@@ -22,6 +22,7 @@ interface DashboardOverviewProps {
     batch: string;
     live_files: number;
     snapshot_count: number;
+    event_type: string;
   }[];
 }
 
@@ -122,7 +123,7 @@ export default function DashboardOverview({
 
           <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
             Real snapshot history from raw.table_health_history — health checks
-            only, maintenance events excluded from this line.
+            and maintenance snapshots included so compaction drops are visible.
           </p>
         </div>
 
@@ -188,7 +189,7 @@ export default function DashboardOverview({
                 />
 
                 <Area
-                  type="monotone"
+                  type="linear"
                   dataKey="live_files"
                   name="Live Data Files"
                   stroke="#6366f1"
@@ -198,7 +199,7 @@ export default function DashboardOverview({
                 />
 
                 <Area
-                  type="monotone"
+                  type="linear"
                   dataKey="snapshot_count"
                   name="Snapshot Count"
                   stroke="#f87171"
