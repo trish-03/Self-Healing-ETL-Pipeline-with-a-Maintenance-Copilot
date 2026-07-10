@@ -312,7 +312,7 @@ def _log_health_snapshot(report: "TableHealthReport", event_type: str = "health_
         print(f"  [WARN] Failed to log health snapshot: {e}")
 
 
-def get_table_health(spark, table_name: str, event_type: str = "health_check") -> TableHealthReport:
+def get_table_health(spark, table_name: str, event_type: str = "health_check", record_history: bool = False) -> TableHealthReport:
     """
     Collects all available metrics for an Iceberg table.
 
@@ -398,7 +398,7 @@ def get_table_health(spark, table_name: str, event_type: str = "health_check") -
         and report.snapshot_count is None
     )
 
-    if not core_metrics_all_failed:
+    if record_history and not core_metrics_all_failed:
         _log_health_snapshot(report, event_type=event_type)
 
     return report
