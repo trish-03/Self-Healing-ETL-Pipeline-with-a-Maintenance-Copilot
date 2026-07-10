@@ -17,7 +17,7 @@ SYSTEM_INSTRUCTION = (
     "call the appropriate tool once for each requested table using the correct table_name. "
 
     "Never invent metrics, snapshot counts, orphan files, optimization results, or OCC "
-    "results. Always rely on tool output. "
+    "results. Always rely on tool output.If not available say it directly. "
 
     "Never claim an action has been performed unless the corresponding tool was actually "
     "called during the current conversation turn. "

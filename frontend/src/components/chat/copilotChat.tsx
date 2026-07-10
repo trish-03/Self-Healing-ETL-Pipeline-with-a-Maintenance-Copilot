@@ -1,7 +1,8 @@
 import { useAtom } from 'jotai';
 import { Send, ShieldAlert, Bot } from 'lucide-react';
-import { chatHistoryAtom, chatInputAtom } from '../store/uiState';
-import { useExecuteMaintenance, useRemoveOrphans, useAgentChat } from '../hooks/useLakehouseData';
+import { chatHistoryAtom, chatInputAtom } from '../../store/chatState';
+import { useExecuteMaintenance, useRemoveOrphans } from '../../hooks/useMaintenance';
+import { useAgentChat } from '../../hooks/useChat';
 
 export default function CopilotChat({ tableName }: { tableName: string }) {
   const [messages, setMessages] = useAtom(chatHistoryAtom);

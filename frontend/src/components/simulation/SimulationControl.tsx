@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { PlayCircle, Clock, CheckCircle2, AlertTriangle } from 'lucide-react';
-import { useWatermark, useRunSimulation } from '../hooks/useLakehouseData';
+import { useWatermark, useRunSimulation } from '../../hooks/useSimulation';
 
 export default function SimulationControl() {
   const [numBatches, setNumBatches] = useState(70);
