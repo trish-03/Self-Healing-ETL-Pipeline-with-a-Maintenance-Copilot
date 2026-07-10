@@ -1,35 +1,26 @@
 import { useState, useEffect } from 'react';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { useAtom } from 'jotai';
-import { 
-  LayoutDashboard, 
-  Activity, 
-  MessageSquare,
-  Bot, 
-  X, 
-  Server, 
-  AlertTriangle, 
-  CheckCircle2,
-  Maximize2,
-  ChevronLeft,
-  ChevronRight,
-  Database,
-  Moon,
-  Sun,
-  PlaySquare,
-  RefreshCw,
-  Bell,
-  ArrowRight,
-  ShieldAlert
-} from 'lucide-react';
-import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
+import { MessageSquare} from 'lucide-react';
 
-import { activeTableAtom, chatHistoryAtom, themeAtom } from './store/uiState';
-import { useTableHealth, useTableHealthHistory } from './hooks/useLakehouseData';
-import CopilotChat from './components/copilotChat';
+ import { activeTableAtom, themeAtom } from './store/uiState';
+ import { chatHistoryAtom } from './store/chatState';
+ import { useTableHealth } from './hooks/useTableHealth';
+ import { useTableHealthHistory } from './hooks/useTableHealth';
+import { transformHealthHistory } from './utils/transformHealthHistory';
+import { useProactiveAlerts } from './hooks/useProactiveAlerts';
 
-import SimulationControl from './components/SimulationControl';
-import OCCControl from './components/OCCControl';
+import CopilotChat from './components/chat/copilotChat';
+import SimulationControl from './components/simulation/SimulationControl';
+import OCCControl from './components/occ/OCCControl';
+import DashboardOverview from './components/dashboard/DashboardOverview';
+import StorageAnalytics from './components/dashboard/StorageAnalytics';
+
+//layout
+import Sidebar from "./components/layout/Sidebar";
+import Header from "./components/layout/Header";
+import ProactiveAlert from './components/layout/ProactiveAlert';
+import CopilotDrawer from './components/layout/CopilotDrawer';
 
 
 const queryClient = new QueryClient();
@@ -61,326 +52,60 @@ function DashboardContent() {
     }
   }, [theme]);
 
-  // Listen for background health alerts even when the Copilot drawer is closed.
-  useEffect(() => {
-    const ws = new WebSocket('ws://localhost:8000/api/ws/alerts');
+  useProactiveAlerts({ setMessages, setProactiveAlert });
 
-    ws.onmessage = (event) => {
-      try {
-        const incomingAlert = JSON.parse(event.data);
-        if (incomingAlert?.requiresConfirmation) {
-          setMessages((prev) => {
-            const alreadyPresent = incomingAlert.alertId
-              ? prev.some((message) => message.alertId === incomingAlert.alertId)
-              : prev.some((message) => message.text === incomingAlert.text && message.alertId === incomingAlert.alertId);
-            if (alreadyPresent) return prev;
-
-            return [
-              ...prev,
-              {
-                id: crypto.randomUUID(),
-                alertId: incomingAlert.alertId,
-                sender: incomingAlert.sender || 'assistant',
-                text: incomingAlert.text || 'A background health issue was detected.',
-                timestamp: new Date(),
-                requiresConfirmation: incomingAlert.requiresConfirmation || false,
-                confirmationType: incomingAlert.confirmationType,
-                targetTable: incomingAlert.targetTable,
-                pendingActions: incomingAlert.pendingActions || []
-              }
-            ];
-          });
-
-          setProactiveAlert({
-            text: incomingAlert.text || 'A background health issue was detected.',
-            targetTable: incomingAlert.targetTable,
-            alertId: incomingAlert.alertId,
-          });
-        }
-      } catch (error) {
-        console.error('Error unpacking proactive alert in app shell:', error);
-      }
-    };
-
-    ws.onerror = (error) => {
-      console.error('App shell proactive alert stream error:', error);
-    };
-
-    return () => {
-      ws.close();
-    };
-  }, []);
 
   // Real chart data, sourced from raw.table_health_history via
   // /api/health/history -- no mocked/fabricated points.
   // Filtered to plain health_check events so the trend line reflects
   // organic growth over time, not the sawtooth maintenance before/after
   // pairs would otherwise introduce.
-  const chartData = (healthHistory?.history ?? [])
-    .filter(h => h.event_type === 'health_check')
-    .slice(-90)
-    .map((h) => ({
-      batch: new Date(h.checked_at).toLocaleString(undefined, {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      }),
-      live_files: h.live_file_count ?? 0,
-      snapshot_count: h.snapshot_count ?? 0,
-    }));
+  const chartData = transformHealthHistory(healthHistory?.history);
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-slate-50 dark:bg-[#0b0f17] text-slate-900 dark:text-slate-100">
 
       {/* 1. LEFT NAVIGATION SIDEBAR */}
-      <aside className={`bg-white dark:bg-[#111827] border-r border-slate-200 dark:border-slate-800 flex flex-col justify-between shrink-0 transition-all duration-300 relative ${isSidebarCollapsed ? 'w-20' : 'w-64'}`}>
-        <button
-          onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-          className="absolute -right-3 top-20 bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 p-1 rounded-full z-20 hidden md:block"
-        >
-          {isSidebarCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
-        </button>
-
-        <div>
-          <div className={`p-6 border-b border-slate-200 dark:border-slate-800 flex items-center gap-3 ${isSidebarCollapsed ? 'justify-center' : ''}`}>
-            <button
-              onClick={handleRefresh}
-              className="p-2 rounded-lg text-slate-500 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
-              title="Refresh metrics and chart"
-            >
-              <RefreshCw size={16} />
-            </button>
-            <div className="p-2 bg-[#226b4d]/10 rounded-lg shrink-0">
-              <Server className="text-[#226b4d] h-5 w-5" />
-            </div>
-            {!isSidebarCollapsed && (
-              <div>
-                <h1 className="font-extrabold text-sm tracking-wide text-slate-900 dark:text-white">LAKEHOUSE COPILOT</h1>
-                <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium tracking-wider uppercase">Project 2 Control Plane</p>
-              </div>
-            )}
-          </div>
-          
-          <nav className="p-4 space-y-1.5">
-            <button
-              onClick={() => setCurrentView('dashboard')}
-              className={`w-full flex items-center rounded-lg text-xs font-semibold tracking-wide transition ${isSidebarCollapsed ? 'justify-center p-2.5' : 'px-4 py-2.5 gap-3'} ${currentView === 'dashboard' ? 'bg-[#226b4d] text-white shadow' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
-            >
-              <LayoutDashboard size={16} />
-              {!isSidebarCollapsed && <span>Dashboard Overview</span>}
-            </button>
-
-            <button
-              onClick={() => setCurrentView('metrics')}
-              className={`w-full flex items-center rounded-lg text-xs font-semibold tracking-wide transition ${isSidebarCollapsed ? 'justify-center p-2.5' : 'px-4 py-2.5 gap-3'} ${currentView === 'metrics' ? 'bg-[#226b4d] text-white shadow' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
-            >
-              <Activity size={16} />
-              {!isSidebarCollapsed && <span>Storage Analytics</span>}
-            </button>
-
-            <button
-                onClick={() => setCurrentView('simulation')}
-                className={`w-full flex items-center rounded-lg text-xs font-semibold tracking-wide transition ${isSidebarCollapsed ? 'justify-center p-2.5' : 'px-4 py-2.5 gap-3'} ${currentView === 'simulation' ? 'bg-[#226b4d] text-white shadow' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
-              >
-                <PlaySquare size={16} />
-                {!isSidebarCollapsed && <span>Simulation Control</span>}
-              </button>
-
-            <button
-              onClick={() => setCurrentView('occ')}
-              className={`w-full flex items-center rounded-lg text-xs font-semibold tracking-wide transition ${isSidebarCollapsed ? 'justify-center p-2.5' : 'px-4 py-2.5 gap-3'} ${currentView === 'occ' ? 'bg-[#226b4d] text-white shadow' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
-            >
-              <ShieldAlert size={16} />
-              {!isSidebarCollapsed && <span>OCC Demo</span>}
-            </button>
-
-            <button
-              onClick={() => { setCurrentView('full_chat'); setIsCopilotOpen(false); }}
-              className={`w-full flex items-center rounded-lg text-xs font-semibold tracking-wide transition ${isSidebarCollapsed ? 'justify-center p-2.5' : 'px-4 py-2.5 gap-3'} ${currentView === 'full_chat' ? 'bg-[#226b4d] text-white shadow' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
-            >
-              <MessageSquare size={16} />
-              {!isSidebarCollapsed && <span>Dedicated Work Chat</span>}
-            </button>
-          </nav>
-        </div>
-
-        <div className="p-4 border-t border-slate-200 dark:border-slate-800 text-center text-[10px] text-slate-400 dark:text-slate-500 font-medium whitespace-nowrap overflow-hidden">
-          {isSidebarCollapsed ? "v2.0" : "Iceberg Engine Monitoring v2.0"}
-        </div>
-      </aside>
+      <Sidebar
+        currentView={currentView}
+        setCurrentView={setCurrentView}
+        isSidebarCollapsed={isSidebarCollapsed}
+        setIsSidebarCollapsed={setIsSidebarCollapsed}
+        handleRefresh={handleRefresh}
+        setIsCopilotOpen={setIsCopilotOpen}
+      />
 
       {/* 2. CORE VIEWPORT */}
       <main className="flex-1 flex flex-col min-w-0 relative overflow-hidden">
-        <header className="h-16 border-b border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-[#111827]/50 flex items-center justify-between px-8 shrink-0 z-10">
-          <div className="flex items-center gap-4">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Target Iceberg Catalog Table:</span>
-            <div className="flex bg-slate-100 dark:bg-[#0b0f17] p-1 rounded-lg border border-slate-200 dark:border-slate-800">
-              {['fact_orders', 'fact_order_items'].map((table) => (
-                <button
-                  key={table}
-                  onClick={() => setActiveTable(table)}
-                  className={`px-3 py-1 rounded-md text-[10px] font-bold uppercase tracking-widest transition ${activeTable === table ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow border border-slate-300 dark:border-slate-700' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
-                >
-                  {table.replace('_', ' ')}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-              className="p-2 rounded-lg text-slate-500 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
-              title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-            >
-              {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-            </button>
-
-            {currentView !== 'full_chat' ? (
-              <button
-                onClick={() => setIsCopilotOpen(!isCopilotOpen)}
-                className="bg-[#226b4d] hover:bg-[#2d7a59] text-white text-xs font-bold py-1.5 px-4 rounded-md flex items-center gap-2 shadow-md transition"
-              >
-                <Bot size={14} />
-                <span>{isCopilotOpen ? "Hide Copilot" : "Open Copilot"}</span>
-              </button>
-            ) : (
-              <div className="flex items-center gap-2 text-[10px] font-bold tracking-widest text-[#226b4d] bg-[#226b4d]/10 px-3 py-1 rounded border border-[#226b4d]/30">
-                <Maximize2 size={12} />
-                FULL PANE INTERACTION PADS
-              </div>
-            )}
-          </div>
-        </header>
-
+        <Header
+            activeTable={activeTable}
+            setActiveTable={setActiveTable}
+            theme={theme}
+            setTheme={setTheme}
+            currentView={currentView}
+            isCopilotOpen={isCopilotOpen}
+            setIsCopilotOpen={setIsCopilotOpen}
+        />
         <div className="flex-1 overflow-y-auto p-8">
-          {proactiveAlert && (
-            <div className="mb-6 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-4 shadow-lg backdrop-blur flex items-start gap-3">
-              <div className="rounded-full bg-amber-500/15 p-2 text-amber-400 shrink-0 mt-0.5">
-                <Bell size={16} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-bold text-amber-200">Background health alert detected</p>
-                <p className="text-xs text-amber-100/90 mt-1 whitespace-pre-line">{proactiveAlert.text}</p>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  onClick={() => {
-                    setCurrentView('full_chat');
-                    setIsCopilotOpen(false);
-                    setProactiveAlert(null);
-                  }}
-                  className="inline-flex items-center gap-2 rounded-lg bg-amber-400 px-3 py-2 text-[11px] font-black uppercase tracking-widest text-slate-950 hover:bg-amber-300 transition"
-                >
-                  Open Chat
-                  <ArrowRight size={12} />
-                </button>
-                <button
-                  onClick={() => setProactiveAlert(null)}
-                  className="rounded-lg border border-amber-500/30 px-3 py-2 text-[11px] font-bold uppercase tracking-widest text-amber-100 hover:bg-amber-500/10 transition"
-                >
-                  Dismiss
-                </button>
-              </div>
-            </div>
-          )}
-
-          {currentView === 'dashboard' && (
-            <div className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                  <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 p-5 rounded-xl flex items-center justify-between overflow-hidden">
-                    <div className="min-w-0">
-                      <span className="text-[10px] font-bold tracking-widest text-slate-500 uppercase block mb-1">Table State Status</span>
-                       <span className={`text-base font-extrabold flex items-center gap-1.5 whitespace-nowrap ${
-                          health?.status === 'FRAGMENTED' ? 'text-amber-500' :
-                          health?.status === 'UNKNOWN' ? 'text-slate-400' :
-                          'text-emerald-500'
-                         }`}>
-                          {isLoading ? 'Reading...' : health?.status}
-                          {!isLoading && (
-                            health?.status === 'FRAGMENTED' ? <AlertTriangle size={16} className="shrink-0" /> :
-                            health?.status === 'UNKNOWN' ? <AlertTriangle size={16} className="shrink-0 opacity-50" /> :
-                            <CheckCircle2 size={16} className="shrink-0" />
-                          )}
-                       </span>
-                    </div>
-                  </div>
-
-                  <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 p-5 rounded-xl">
-                    <span className="text-[10px] font-bold tracking-widest text-slate-500 uppercase block mb-1">Live Parquet Blocks</span>
-                    <span className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">{isLoading ? '...' : health?.metrics.live_file_count}</span>
-                  </div>
-
-                  <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 p-5 rounded-xl">
-                    <span className="text-[10px] font-bold tracking-widest text-slate-500 uppercase block mb-1">Snapshot Count</span>
-                    <span className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">{isLoading ? '...' : health?.metrics.snapshot_count}</span>
-                  </div>
-
-                  <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 p-5 rounded-xl">
-                    <span className="text-[10px] font-bold tracking-widest text-slate-500 uppercase block mb-1">Average File Size</span>
-                    <span className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
-                      {isLoading ? '...' : `${((health?.metrics.average_file_size_bytes ?? 0) / 1024).toFixed(2)} KB`}
-                    </span>
-                  </div>
-
-                  <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 p-5 rounded-xl">
-                    <span className="text-[10px] font-bold tracking-widest text-slate-500 uppercase block mb-1">Delete Files</span>
-                    <span className={`text-2xl font-black tracking-tight ${health?.metrics.delete_file_count && health.metrics.delete_file_count > 0 ? 'text-red-500 dark:text-red-400' : 'text-slate-400'}`}>
-                      {isLoading ? '...' : health?.metrics.delete_file_count}
-                    </span>
-                  </div>
-                </div>
-              <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 h-96 rounded-xl p-6 flex flex-col">
-                <div className="mb-4">
-                  <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">Small-File Frag & Snapshot Accumulation Trend</h3>
-                  <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">Real snapshot history from raw.table_health_history -- health checks only, maintenance events excluded from this line.</p>
-                </div>
-                <div className="flex-1 w-full min-h-0">
-                  {chartData.length === 0 ? (
-                    <div className="h-full flex items-center justify-center text-slate-400 dark:text-slate-600 text-xs italic">
-                      No health history yet for this table -- run a health check or maintenance pass to populate this chart.
-                    </div>
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
-                        <defs>
-                          <linearGradient id="colorLive" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#6366f1" stopOpacity={0.2}/>
-                            <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
-                          </linearGradient>
-                          <linearGradient id="colorSnapshots" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#f87171" stopOpacity={0.2}/>
-                            <stop offset="95%" stopColor="#f87171" stopOpacity={0}/>
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-                        <XAxis dataKey="batch" stroke="#6b7280" fontSize={10} tickLine={false} />
-                        <YAxis stroke="#6b7280" fontSize={10} tickLine={false} />
-                        <Tooltip contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', borderRadius: '8px', fontSize: '11px', color: '#e2e8f0' }} />
-                        <Area type="monotone" dataKey="live_files" name="Live Data Files" stroke="#6366f1" fillOpacity={1} fill="url(#colorLive)" strokeWidth={2} />
-                        <Area type="monotone" dataKey="snapshot_count" name="Snapshot Count" stroke="#f87171" fillOpacity={1} fill="url(#colorSnapshots)" strokeWidth={2} />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  )}
-                </div>
-              </div>
-            </div>
+            <ProactiveAlert
+              alert={proactiveAlert}
+              onDismiss={() => setProactiveAlert(null)}
+              onOpenChat={() => {
+                setCurrentView("full_chat");
+                setIsCopilotOpen(false);
+                setProactiveAlert(null);
+              }}
+            />
+          {currentView === "dashboard" && (
+            <DashboardOverview
+              health={health}
+              isLoading={isLoading}
+              chartData={chartData}
+            />
           )}
 
           {currentView === 'metrics' && (
-            <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 p-6 rounded-xl text-slate-500 dark:text-slate-400 text-xs space-y-3">
-              <div className="flex items-center gap-2 text-slate-900 dark:text-white font-bold text-sm">
-                <Database size={16} className="text-indigo-500 dark:text-indigo-400" />
-                <span>Deep File Manifest Log Arrays: {activeTable}</span>
-              </div>
-              <p>Active Layout Allocation Details:</p>
-              <ul className="list-disc pl-5 space-y-1 text-slate-600 dark:text-slate-300 font-mono text-[11px]">
-                <li>Logical Model Definition: Unpartitioned Append Target Mode</li>
-                <li>Average Payload Block Size: {((health?.metrics.average_file_size_bytes ?? 0) / 1024).toFixed(2)} KB</li>
-                <li>Storage Structure Mode: Merge-on-Read (MoR)</li>
-              </ul>
-            </div>
+            <StorageAnalytics activeTable={activeTable} health={health} />
           )}
 
           {currentView === 'simulation' && <SimulationControl />}
@@ -402,21 +127,11 @@ function DashboardContent() {
       </main>
 
       {/* 3. SLIDING DRAWER CONTROL SIDEBAR */}
-      <div className={`fixed top-0 right-0 h-full w-96 bg-white dark:bg-[#111827] border-l border-slate-200 dark:border-slate-800 shadow-2xl transform transition-transform duration-300 ease-in-out flex flex-col justify-between z-50 ${isCopilotOpen ? 'translate-x-0' : 'translate-x-full'}`}>
-        <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-white/80 dark:bg-[#111827]/80 shrink-0">
-          <div className="flex items-center gap-2">
-            <Bot size={18} className="text-[#226b4d]" />
-            <span className="font-bold text-xs tracking-wider text-slate-900 dark:text-white uppercase">Copilot Assistant</span>
-          </div>
-          <button onClick={() => setIsCopilotOpen(false)} className="text-slate-400 hover:text-slate-700 dark:hover:text-white p-1 rounded-md transition hover:bg-slate-100 dark:hover:bg-slate-800">
-            <X size={16} />
-          </button>
-        </div>
-        <div className="flex-1 min-h-0">
-          <CopilotChat tableName={activeTable} />
-        </div>
-      </div>
-
+      <CopilotDrawer
+        isOpen={isCopilotOpen}
+        onClose={() => setIsCopilotOpen(false)}
+        activeTable={activeTable}
+      />
     </div>
   );
 }

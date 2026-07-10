@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, PlayCircle, RefreshCw, ShieldAlert, Users } from 'lucide-react';
 
-import { useOCCConflictHistory, useRunOCC } from '../hooks/useLakehouseData';
+import { useOCCConflictHistory, useRunOCC } from '../../hooks/useOCC';
 
 function formatTimestamp(value: string) {
   return new Date(value).toLocaleString(undefined, {
