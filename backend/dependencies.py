@@ -90,7 +90,7 @@ async def check_table_health_job():
     async with spark_busy_lock:
         try:
             for table in ["fact_orders", "fact_order_items"]:
-                raw_health = get_table_health(spark_state.session, table)
+                raw_health = get_table_health(spark_state.session, table, record_history=True)
 
                 if _collection_failed(raw_health):
                     # Metrics genuinely failed to collect this tick -- do
@@ -164,7 +164,7 @@ async def lifespan(app: FastAPI):
     await start_mcp_session()
 
     print("Starting APScheduler Autonomous Monitoring Framework...")
-    scheduler.add_job(check_table_health_job, 'interval', seconds=300, id='iceberg_health_check', record_history=True)
+    scheduler.add_job(check_table_health_job, 'interval', seconds=300, id='iceberg_health_check')
     scheduler.start()
 
     yield

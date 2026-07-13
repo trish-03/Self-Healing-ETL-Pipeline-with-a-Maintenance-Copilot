@@ -6,6 +6,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from connection.spark_session import get_spark
 from connection.db_connection import get_connection
 from config.config import JDBC_URL, JDBC_PROPS, CATALOG_NAME
+from maintenance.health_metrics import get_table_health
 
 # Watermark file lives at project root
 WATERMARK_FILE = "watermark.txt"
@@ -154,6 +155,12 @@ def run_incremental_load(spark):
 
     update_watermark(new_watermark)
     print(f"  [Iceberg] Merged {order_count} orders, {item_count} items. Watermark -> {new_watermark}")
+
+    for table_name in ("fact_orders", "fact_order_items"):
+        try:
+            get_table_health(spark, table_name, record_history=True)
+        except Exception as e:
+            print(f"  [WARN] Failed to record health snapshot for {table_name}: {e}")
 
     return {"orders_merged": order_count, "items_merged": item_count}
 

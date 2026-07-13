@@ -139,6 +139,17 @@ def remove_orphan_files(spark, table, older_than_hours=24, confirmed=False):
 
     deleted_count = result.count()
 
+    try:
+        table_name = table.split(".")[-1]
+        get_table_health(
+            spark,
+            table_name,
+            event_type="orphan_removal",
+            record_history=True,
+        )
+    except Exception as e:
+        print(f"[WARN] Failed to record orphan-removal health snapshot: {e}")
+
     return {
         "executed": True,
         "message": f"{deleted_count} orphan file(s) removed.",

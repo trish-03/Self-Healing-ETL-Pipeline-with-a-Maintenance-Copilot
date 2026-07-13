@@ -17,7 +17,7 @@ export const chatHistoryAtom = atom<ChatMessage[]>([
   {
     id: 'initial-system',
     sender: 'assistant',
-    text: 'Maintenance Copilot active. Ready to analyze MoR layout profiles or scan for orphan metadata.',
+    text: 'Maintenance Copilot active.',
     timestamp: new Date(),
   },
 ]);
