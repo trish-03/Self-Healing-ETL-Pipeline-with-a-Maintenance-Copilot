@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   CheckCircle2,
 } from "lucide-react";
+import { useState } from "react";
 
 import {
   ResponsiveContainer,
@@ -11,6 +12,7 @@ import {
   YAxis,
   Tooltip,
   CartesianGrid,
+  Legend,
 } from "recharts";
 
 import type { TableHealthResponse } from '../../hooks/useTableHealth';
@@ -26,11 +28,63 @@ interface DashboardOverviewProps {
   }[];
 }
 
+type LegendEntry = {
+  dataKey?: string;
+  value?: string;
+  color?: string;
+};
+
 export default function DashboardOverview({
   health,
   isLoading,
   chartData,
 }: DashboardOverviewProps) {
+  const [activeSeries, setActiveSeries] = useState<"both" | "live_files" | "snapshot_count">("both");
+
+  const legendEntries: LegendEntry[] = [
+    { dataKey: "live_files", value: "File Count", color: "#6366f1" },
+    {
+      dataKey: "snapshot_count",
+      value: "Snapshot Count",
+      color: "#f87171",
+    },
+  ];
+
+  const renderLegend = () => (
+    <div className="mb-2 flex flex-wrap items-center justify-end gap-2 text-[10px] font-medium">
+      {legendEntries.map((entry) => {
+        const isActive = activeSeries === "both" || activeSeries === entry.dataKey;
+
+        return (
+          <button
+            key={entry.dataKey}
+            type="button"
+            aria-pressed={isActive}
+            onClick={() => {
+              if (activeSeries === entry.dataKey) {
+                setActiveSeries("both");
+                return;
+              }
+
+              setActiveSeries(entry.dataKey as "live_files" | "snapshot_count");
+            }}
+            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 transition-colors ${
+              isActive
+                ? "border-slate-300/80 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200"
+                : "border-slate-200 dark:border-slate-800 bg-transparent text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <span
+              className="h-2 w-2 rounded-full"
+              style={{ backgroundColor: entry.color }}
+            />
+            <span>{entry.value}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
@@ -116,15 +170,17 @@ export default function DashboardOverview({
       </div>
 
       <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 h-96 rounded-xl p-6 flex flex-col">
-        <div className="mb-4">
-          <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">
-            Small-File Frag & Snapshot Accumulation Trend
-          </h3>
+        <div className="mb-4 flex items-start justify-between gap-4">
+          <div>
+            <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">
+              Small-File & Snapshot Accumulation Trend
+            </h3>
 
-          <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
-            Real snapshot history from raw.table_health_history — health checks
-            and maintenance snapshots included so compaction drops are visible.
-          </p>
+            <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
+              Real snapshot history from raw.table_health_history — health checks
+              and maintenance snapshots included so compaction drops are visible.
+            </p>
+          </div>
         </div>
 
         <div className="flex-1 w-full min-h-0">
@@ -188,14 +244,21 @@ export default function DashboardOverview({
                   }}
                 />
 
+                <Legend
+                  verticalAlign="top"
+                  align="right"
+                  content={renderLegend}
+                />
+
                 <Area
                   type="linear"
                   dataKey="live_files"
-                  name="Live Data Files"
+                  name="File Count"
                   stroke="#6366f1"
                   fillOpacity={1}
                   fill="url(#colorLive)"
                   strokeWidth={2}
+                  hide={activeSeries !== "both" && activeSeries !== "live_files"}
                 />
 
                 <Area
@@ -206,6 +269,7 @@ export default function DashboardOverview({
                   fillOpacity={1}
                   fill="url(#colorSnapshots)"
                   strokeWidth={2}
+                  hide={activeSeries !== "both" && activeSeries !== "snapshot_count"}
                 />
               </AreaChart>
             </ResponsiveContainer>
