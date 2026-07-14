@@ -166,7 +166,7 @@ export default function CopilotChat({
   const isPending = maintenanceMutation.isPending || orphanMutation.isPending;
 
   return (
-    <div className="flex flex-col h-full bg-slate-900">
+    <div className="flex flex-col h-full bg-white dark:bg-[#0b0f17]">
       <div className="flex-1 p-4 overflow-y-auto space-y-4">
         {messages.map((msg) => (
           <div key={msg.id} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -174,28 +174,31 @@ export default function CopilotChat({
               className={`max-w-[85%] rounded-xl p-3 text-xs flex gap-2 ${
                 msg.sender === 'user'
                   ? 'bg-indigo-600 text-white'
-                  : 'bg-slate-800 border border-slate-700 text-slate-200'
+                  : 'bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200'
               }`}
             >
-              {msg.sender !== 'user' && <Bot size={14} className="text-indigo-400 shrink-0 mt-0.5" />}
+              {msg.sender !== 'user' && <Bot
+                    size={14}
+                    className="text-indigo-600 dark:text-indigo-400 shrink-0 mt-0.5"
+                  />}
               <div className="space-y-2 w-full">
                 <p className="whitespace-pre-line">{msg.text}</p>
 
                 {msg.requiresConfirmation && msg.pendingActions && msg.pendingActions.length > 0 && (
-                  <div className="p-3 bg-slate-950 border border-amber-500/30 rounded-lg space-y-2 mt-2">
+                  <div className="p-3 bg-white dark:bg-slate-950 border border-amber-500/30 rounded-lg space-y-2 mt-2">
                     <div className="flex items-center gap-1.5 text-amber-400 font-semibold">
                       <ShieldAlert size={14} />
                       <span>Authorization Gate Triggered</span>
                     </div>
-                    <p className="text-[11px] text-slate-400">
+                    <p className="text-[11px] text-slate-600 dark:text-slate-400">
                       {msg.pendingActions.length > 1
                         ? `${msg.pendingActions.length} tables have pending actions:`
                         : 'Confirm the pending action below:'}
                     </p>
 
                     {msg.pendingActions.map((action) => (
-                      <div key={action.targetTable} className="flex items-center justify-between gap-2 bg-slate-900 rounded p-2">
-                        <span className="text-[11px] text-slate-300">
+                      <div key={action.targetTable} className="flex items-center justify-between gap-2 bg-slate-50 dark:bg-slate-900 rounded p-2">
+                        <span className="text-[11px] text-slate-700 dark:text-slate-300">
                           <code>{action.targetTable}</code> — {action.confirmationType === 'orphans' ? 'orphan removal' : 'compaction'}
                         </span>
                         <button
@@ -215,14 +218,14 @@ export default function CopilotChat({
         ))}
       </div>
 
-      <div className="p-3 border-t border-slate-800 flex gap-2 bg-slate-900/50">
+      <div className="p-3 border-t border-slate-200 dark:border-slate-800 flex gap-2 bg-white dark:bg-[#111827]">
         <input
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleSend()}
           placeholder="Ask about table health, or type 'optimize'..."
-          className="flex-1 bg-slate-950 border border-slate-800 rounded-lg text-xs px-3 py-2 text-slate-100 focus:outline-none focus:border-indigo-500 transition"
+          className="flex-1 bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-xs px-3 py-2 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 transition"
         />
         <button
           onClick={() => handleSend()}

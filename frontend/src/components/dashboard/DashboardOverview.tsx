@@ -175,11 +175,6 @@ export default function DashboardOverview({
             <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">
               Small-File & Snapshot Accumulation Trend
             </h3>
-
-            <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
-              Real snapshot history from raw.table_health_history — health checks
-              and maintenance snapshots included so compaction drops are visible.
-            </p>
           </div>
         </div>
 

@@ -38,7 +38,7 @@ export function useRunSimulation() {
           num_updates_per_batch: numUpdatesPerBatch,
           num_new_orders_per_batch: numNewOrdersPerBatch,
         },
-        { timeout: 300000 }
+        { timeout: 600000 }
       );
       return data;
     },
