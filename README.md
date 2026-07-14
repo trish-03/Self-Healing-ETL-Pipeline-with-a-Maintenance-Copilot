@@ -151,6 +151,26 @@ This project has two distinct data layers: an **operational source layer** in Po
 - `fact_orders` (Copy-on-Write-style frequent MERGE) and `fact_order_items` (pure inserts) exhibit different degradation patterns - write amplification vs. small-file accumulation - and are diagnosed accordingly.
 - OCC history is tracked separately (`occ_conflict_log`) so the frontend can explain concurrency failures using real recorded outcomes rather than a hypothetical example.
 
+### Iceberg Metadata Reference
+
+Apache Iceberg tracks table state through a layered metadata structure, separate from the actual data. Understanding this layering is necessary to read the health metrics and before/after maintenance numbers used throughout this project.
+
+- **Data files** — the actual Parquet files holding table rows. `live_file_count` counts data files referenced by the current snapshot; `physical_file_count` counts every Parquet file physically present on disk (data + delete files combined), regardless of whether anything still references it. A gap between the two is a signal of leftover, unreferenced files.
+
+- **Delete files** — under Merge-on-Read (the mode used by every fact table in this project), an `UPDATE`, `MERGE`, or `DELETE` doesn't rewrite the affected data file. Instead it writes a small delete file that marks which rows in an existing data file are no longer valid. Position delete files (the kind used here) mark deletions by file + row position. These are invisible to `rewrite_data_files` — they only get cleaned up by `rewrite_position_delete_files` (`compact_delete_files()` in this project), which is why `delete_file_count` can climb independently of `live_file_count`.
+
+- **Manifests** — a manifest is a file listing a set of data files (or delete files) and their statistics (row counts, column bounds, etc.). Manifests are what a query engine actually reads to prune irrelevant files before scanning. `manifest_count` in this project queries `{table}.manifests`, which reflects the manifests belonging to the **current snapshot only**, not an accumulated history.
+
+- **Manifest list** — one per snapshot. It's the file that lists *which manifests* make up that snapshot's complete view of the table. Every commit (every `MERGE`) produces a new manifest list. This project doesn't query manifest list count directly, but it's what a snapshot fundamentally *is* underneath — a pointer to one manifest list.
+
+- **Snapshot** — a complete, versioned view of the table at one point in time, defined by its manifest list. Every successful `MERGE`/`UPDATE`/`INSERT` creates a new snapshot; the previous one isn't deleted automatically, it just stops being the "current" pointer. `snapshot_count` tracks how many are currently retained. `expire_snapshots()` is what actually prunes old ones (and, transitively, the data files that only those old snapshots referenced) — this project explicitly passes `older_than => TIMESTAMP '{now}'` rather than relying on Iceberg's ~5-day default, since the default means freshly created snapshots during a demo/test cycle would never qualify for expiry.
+
+- **metadata.json** — the top-level file recording the table's schema, partition spec, and — critically — a pointer to the *current* snapshot's manifest list. Every commit writes a brand-new `metadata.json`; by default Iceberg keeps every one it's ever written (`write.metadata.previous-versions-max` defaults to 100, `delete-after-commit` defaults to false). This project turns both of those on at table-creation time (`initial_load.py`), so `metadata_json_count` doesn't grow unbounded by default. Unlike the other metrics, there's no "live" vs "physical" split for this one — it's pure accumulated history, counted directly off disk.
+
+- **Orphan files** — Parquet files physically present under a table's `data/` directory that are not referenced by *any* retained snapshot's manifests — typically leftovers from a failed write or an aborted compaction, not normal churn from MERGE. Counted read-only via Iceberg's own `remove_orphan_files(..., dry_run=true)` procedure (so the count always matches exactly what an actual deletion would remove), and only physically deleted through a separate, explicitly confirmed action — never automatically as part of routine maintenance. Iceberg enforces a hard 24-hour minimum on `older_than` for this operation, to avoid deleting files a concurrent job might still be mid-write on.
+
+**How a `MERGE` under Merge-on-Read touches each layer:** a new metadata.json is written -> pointing to a new manifest list -> covering a new snapshot -> whose manifests reference the original data files (untouched) plus one new delete file marking which rows are now stale. This is why `live_file_count` alone doesn't tell the whole story: a table can look file-light while quietly accumulating delete files, manifests, snapshots, and metadata.json versions underneath — which is exactly why this project tracks all of these independently rather than collapsing them into a single "health" number.
+
 ## Setup And Run
 
 These steps are intended to work from a clean clone. Do know that it requires spark version 4.1.x.
