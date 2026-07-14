@@ -17,36 +17,72 @@ The business scenario is a data engineering team that needs to keep a retail-sty
 
 Image in progress.
 
-PostgreSQL (raw schema, OLTP)
-   │
-   ├── initial_load.py    ── one-time bulk load, dims get surrogate keys
-   ├── incremental_load.py── watermark-driven CDC, MERGE into facts
-   └── inventory_load.py  ── snapshot load for OCC demo table
-   │
-   ▼
-Apache Iceberg (warehouse schema, Hadoop catalog)
-   dim_customer, dim_product, dim_date
-   fact_orders, fact_order_items, fact_inventory
-   │
-   ▼
-maintenance/ ── health monitoring + self-healing operations
-
 ```text
 Postgres raw schema
-	-> Spark JDBC ingest
-	-> Apache Iceberg warehouse
-	-> FastAPI backend
-	-> MCP tools + Groq-hosted agent
-	-> React dashboard / Copilot drawer
+    -> Spark JDBC ingest (initial_load.py / incremental_load.py / inventory_load.py)
+    -> Apache Iceberg warehouse (Hadoop catalog, local)
+    -> FastAPI backend (routers/)
+    -> MCP subprocess (agent_tools.py, stdio) <-> Groq-hosted agent (agent.py)
+    -> React dashboard / Copilot drawer
 ```
+### Layer 0: Initial Data Generation
 
-The main runtime path is:
+Before any loader runs, the `raw` schema needs historical data to load. `data/faker_generator.py` populates it in a fixed sequence: customers -> products -> `dim_date` -> orders -> order items, since orders and items have foreign-key dependencies on the tables generated before them.
 
-1. Postgres stores the source and operational tables in the `raw` schema.
-2. Spark reads those tables over JDBC and writes Iceberg tables into the local warehouse.
-3. FastAPI serves health, maintenance, simulation, OCC, chat, and websocket endpoints.
-4. The MCP layer exposes read-only and guarded maintenance tools to the agent.
-5. The React frontend displays table health, maintenance history, simulation controls, OCC runs, and chat.
+- **Volume**: 500 customers, 100 products, a full `dim_date` range (`2023-01-01` to `2024-12-31`), 10,000 orders with 1-4 line items each.
+- **Order status is date-aware, not random**: orders older than 21 days before the dataset's end date (`DATE_END`) are treated as resolved - 90% delivered, 10% returned, with `updated_at` set to a realistic shipping delay (2-10 days, plus extra days for returns) after `created_at`. Orders within the last 21 days are left "in motion" (pending/confirmed/shipped, `updated_at == created_at`), so the dataset ends with a believable mix of closed and active orders rather than everything resolved or everything pending.
+- **Deliberately corrupted `line_total`**: 10% of order items get a random `line_total` instead of the correct `(unit_price * quantity) - discount` calculation. This is an intentional, planted data-quality issue - the forensic finding it produces, and the fix applied in the silver layer, are part of the project's core narrative rather than a bug to be avoided.
+- **Idempotency**: every insert uses `ON CONFLICT DO NOTHING`, so re-running the generator against a partially-populated schema doesn't fail or duplicate rows.
+
+This step runs once, before `etl/init_schema.py` (creates the schema) and `etl/initial_load.py` (loads Postgres -> Iceberg). See Setup & Run Instructions for the exact order.
+
+### Layer 1: Postgres (`raw` schema, OLTP)
+
+Source of truth for all operational data. Three loader scripts move data out of it into Iceberg, each with a distinct responsibility:
+
+- **`initial_load.py`** - one-time bulk load. Reads all five source tables over JDBC, assigns surrogate keys to dimension tables only (`monotonically_increasing_id()`), and writes every Iceberg table with `createOrReplace()`. Safe to run exactly once against a clean warehouse; also resets the watermark row so the first incremental run starts clean.
+- **`incremental_load.py`** - watermark-driven CDC. Reads only rows changed since the last successful run (`updated_at > last_loaded_at`, pushed down to Postgres via the JDBC subquery), then `MERGE`s into the Iceberg fact tables. Exposes `run_incremental_load(spark)` as a reusable function so both the CLI entry point and `simulate_batches.py` share the exact same merge logic.
+- **`inventory_load.py`** - one-time snapshot load of `fact_inventory`, isolated from the orders/items pipeline since it exists purely to give the OCC demo a dedicated, mutable table to contend over.
+
+### Layer 2: Apache Iceberg (`warehouse` namespace, Hadoop catalog)
+
+- `dim_customer`, `dim_product`, `dim_date` - dimensions with surrogate keys, written once by `initial_load.py`.
+- `fact_orders`, `fact_order_items`, `fact_inventory` - fact tables, all configured Merge-on-Read (`write.merge.mode`, `write.update.mode`, `write.delete.mode = merge-on-read`) with metadata cleanup enabled (`delete-after-commit`, `previous-versions-max = 10`) so metadata.json accumulation doesn't run away by default.
+
+### Layer 3: FastAPI backend (`backend/`)
+
+- A single shared `SparkSession` is created once at process startup (`dependencies.py` lifespan) and reused across every request, guarded by an `asyncio.Lock` (`spark_busy_lock`) so overlapping requests (e.g. a simulation run and a scheduled health check) can't issue concurrent queries against it and produce transient false-healthy readings.
+- Routers are split by concern: `health`, `maintenance`, `orphans`, `simulation`, `chat`, `occ`, `notifications`. Each maps to one or more MCP tools.
+- An `APScheduler` background job (`check_table_health_job`, every 300s) is the sole periodic writer of health history rows and the trigger for proactive agent alerts pushed over WebSocket.
+
+### Layer 4: MCP + agent
+
+- `agent_tools.py` runs as a **separate subprocess**, communicating with the FastAPI process over stdio via the MCP protocol (`ClientSession`), not as an imported Python module. Each tool then makes an HTTP call back to the same FastAPI instance it's a subprocess of (loopback pattern).
+- This is deliberate: it gives the agent and a human user the exact same interface (both go through the HTTP API), decouples the tool process's lifecycle from the Spark/JVM lifecycle, and allows tools to be tested in isolation with MCP Inspector without needing a live agent loop.
+- `agent.py` builds the tool-calling loop against Groq (`llama-3.3-70b-versatile`), forcing `tool_choice="required"` when an action verb is detected in the user's message, and validating every `table_name` argument against a `KNOWN_TABLES` allowlist before it reaches a tool call. Destructive tools (`optimize_lakehouse_table`, `remove_orphan_lakehouse_files`) always default to `confirmed=False`; the agent cannot self-authorize based on user phrasing alone.
+
+### Layer 5: React frontend
+
+Five views (Dashboard, Storage Analytics, Simulation, OCC Demo, Dedicated Work Chat), backed by domain-specific data hooks and a WebSocket connection for proactive alerts, all talking to the FastAPI layer above.
+
+## How data changes over time
+
+The system models two different kinds of change, and the pipeline treats them differently:
+
+- **Order lifecycle changes** - existing orders move forward through a fixed status chain (`pending -> confirmed -> shipped -> delivered -> returned`), never backward. `incremental_fixture.py` enforces this via a lookup table (`STATUS_PROGRESSION`) rather than conditional branches, and a `delivered` order only has an 8% chance of flipping to `returned`, and only within a `RETURN_WINDOW_DAYS` cutoff - once that window closes, the order is excluded from further changes entirely. This produces a realistic mix of resolved and in-flight orders rather than every order eventually resolving.
+- **New activity** - each simulated batch also inserts a handful of brand-new orders (with fresh line items) and, 10% of the time, a brand-new customer. Both changes are timestamped at `batch_date`, which itself advances irregularly: 80% of batches jump forward by hours (a day passing), 20% stay within the same day (multiple loads landing on one calendar day) - this variability is what actually exercises the watermark logic under realistic, non-uniform timing instead of a clean daily cadence.
+- **Propagation to the lakehouse** - `incremental_load.py` picks up everything changed since the last watermark and applies it with different `MERGE` semantics per table: `fact_orders` gets both `WHEN MATCHED THEN UPDATE` (status/timestamp changes) and `WHEN NOT MATCHED THEN INSERT` (new orders), while `fact_order_items` only ever inserts, since line items are immutable once created. The watermark itself is derived from `MAX(updated_at)` on the merged data - not wall-clock time - because simulated batches backdate their timestamps, and using `datetime.now()` would race ahead of the simulated timeline and silently drop everything in between on the next run.
+- **Effect on table health** - these two different mutation patterns produce two different degradation signatures: `fact_orders`' repeated in-place updates behave like Copy-on-Write write amplification, while `fact_order_items`' pure-insert pattern produces genuine small-file fragmentation. The health/maintenance layer diagnoses and treats these differently rather than applying one blanket fix.
+- **Concurrent writes** - `fact_inventory` is the one table where two writers can attempt to change the *same* row at the *same* time. The OCC demo forces this by having two independent Spark processes read the same snapshot (synchronized via a file-based barrier so neither writer gets a head start), then both attempt a `MERGE` that decrements `quantity`. Iceberg's optimistic concurrency control lets exactly one commit succeed and rejects the other, which is logged to `occ_conflict_log` from inside the writer process itself.
+
+## How health data is captured
+
+Not every read of a table's health produces a logged row - logging is opt-in (`record_history: bool = False`), because unconditional logging on every call previously saturated the trend chart with polling noise:
+
+- **Logged automatically**: the scheduled background check (`check_table_health_job`, every 300s), every post-merge check inside `initial_load.py` / `incremental_load.py`, and every before/after snapshot taken during `run_maintenance()` or orphan removal.
+- **Not logged**: ad hoc reads, such as a user opening the dashboard or the agent calling `check_lakehouse_health` mid-conversation - these query live metrics without writing to `table_health_history`.
+- **Skipped even when requested**: if every core metric (`live_file_count`, `average_file_size_bytes`, `snapshot_count`) fails to collect, the row is dropped rather than inserted, since an all-null row carries no information and would only pollute the chart.
+- **Fragmentation verdicts** (`HEALTHY` / `FRAGMENTED` / `UNKNOWN`) use one shared threshold check (`_is_fragmented`) reused identically by the standalone script and the API - a table is never called fragmented on partially-failed metrics; `_collection_failed` must be checked first, or the result is `UNKNOWN`.
 
 ## Tech Stack
 
@@ -79,17 +115,26 @@ Frontend:
 
 Image in process
 
-### Operational source tables in `raw`
+This project has two distinct data layers: an **operational source layer** in Postgres (`raw` schema) and an **analytical lakehouse layer** in Apache Iceberg (`warehouse` namespace, Hadoop catalog). The ETL pipeline moves data from the former into the latter.
+
+### Operational source tables (Postgres, schema `raw`)
 
 - `customers` - customer master data
 - `products` - product master data
 - `dim_date` - calendar dimension
-- `orders` - order header fact
-- `order_items` - order line fact
-- `pipeline_watermark` - incremental load checkpoint
-- `table_health_history` - health snapshots captured by the maintenance loop
-- `occ_conflict_log` - OCC demo results
-- `fact_inventory` - inventory fact used by the simulation and health flows
+- `orders` - order header, mutable (status progresses pending -> confirmed -> shipped -> delivered -> returned)
+- `order_items` - order line items, immutable once created
+- `fact_inventory` - warehouse inventory quantities, used by the simulation and OCC demo
+- `pipeline_watermark` - incremental load checkpoint (`last_loaded_at` per source, replaces the earlier flat-file watermark approach)
+- `table_health_history` - health snapshots captured by the maintenance loop (opt-in logging, not every read - see Architecture for what triggers a write)
+- `occ_conflict_log` - per-writer outcomes from the OCC concurrency demo
+
+### Lakehouse tables (Iceberg, catalog `local`, namespace `warehouse`)
+
+- `dim_customer`, `dim_product`, `dim_date` - dimension tables with surrogate keys (`customer_sk`, `product_sk`, `date_sk`) generated once during initial load
+- `fact_orders` - Merge-on-Read, updated on every incremental batch (status/timestamp changes trigger `MERGE ... WHEN MATCHED`)
+- `fact_order_items` - Merge-on-Read, insert-only (no matched-update branch, since items are immutable)
+- `fact_inventory` - Merge-on-Read, dedicated to the OCC demo; decrement-style conflicts on `quantity` keyed by `item_id`
 
 ### Relationships
 
@@ -98,16 +143,18 @@ Image in process
 - `orders.date_id -> dim_date.date_id`
 - `order_items.order_id -> orders.order_id`
 - `order_items.sku_code -> products.sku_code`
+- Iceberg dimension surrogate keys (`customer_sk`, `product_sk`, `date_sk`) map 1:1 to their Postgres natural-key counterparts; fact tables in Iceberg mirror the same relationships via natural keys, not surrogate keys.
 
 ### Iceberg / maintenance facts
 
-- `fact_orders` and `fact_order_items` are the two Iceberg tables the maintenance copilot watches most closely.
+- `fact_orders` and `fact_order_items` are the two Iceberg tables the maintenance copilot watches most closely; `fact_inventory` is monitored separately as the OCC demo target.
 - The health layer records live file count, physical file count, delete-file count, snapshot count, manifest count, metadata JSON count, orphan file count, and partition distribution.
-- OCC history is tracked separately so the frontend can explain concurrency failures without guessing.
+- `fact_orders` (Copy-on-Write-style frequent MERGE) and `fact_order_items` (pure inserts) exhibit different degradation patterns - write amplification vs. small-file accumulation - and are diagnosed accordingly.
+- OCC history is tracked separately (`occ_conflict_log`) so the frontend can explain concurrency failures using real recorded outcomes rather than a hypothetical example.
 
 ## Setup And Run
 
-These steps are intended to work from a clean clone.
+These steps are intended to work from a clean clone. Do know that it requires spark version 4.1.x.
 
 ### Prerequisites
 
