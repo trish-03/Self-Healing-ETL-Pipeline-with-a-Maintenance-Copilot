@@ -34,7 +34,6 @@ export default function Sidebar({
   setCurrentView,
   isSidebarCollapsed,
   setIsSidebarCollapsed,
-  handleRefresh,
   setIsCopilotOpen,
 }: SidebarProps) {
   return (
@@ -60,13 +59,6 @@ export default function Sidebar({
             isSidebarCollapsed ? "justify-center" : ""
           }`}
         >
-          <button
-            onClick={handleRefresh}
-            className="p-2 rounded-lg text-slate-500 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
-            title="Refresh metrics and chart"
-          >
-            <RefreshCw size={16} />
-          </button>
 
           <div className="p-2 bg-[#226b4d]/10 rounded-lg shrink-0">
             <Server className="text-[#226b4d] h-5 w-5" />

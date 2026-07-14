@@ -43,9 +43,17 @@ function DashboardContent() {
   setPendingPrompt(null);
 }, []);
 
-  const handleRefresh = () => {
-    queryClient.invalidateQueries({ queryKey: ['tableHealth', activeTable] });
-    queryClient.invalidateQueries({ queryKey: ['tableHealthHistory', activeTable] });
+  const handleRefresh = async () => {
+    await Promise.all([
+      queryClient.refetchQueries({
+        queryKey: ['tableHealth', activeTable],
+        type: 'active',
+      }),
+      queryClient.refetchQueries({
+        queryKey: ['tableHealthHistory', activeTable],
+        type: 'active',
+      }),
+    ]);
   };
 
   const handleExplainOCC = (record: OCCConflictRecord) => {
