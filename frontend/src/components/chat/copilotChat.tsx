@@ -185,21 +185,17 @@ export default function CopilotChat({
                 <p className="whitespace-pre-line">{msg.text}</p>
 
                 {msg.requiresConfirmation && msg.pendingActions && msg.pendingActions.length > 0 && (
-                  <div className="p-3 bg-white dark:bg-slate-950 border border-amber-500/30 rounded-lg space-y-2 mt-2">
-                    <div className="flex items-center gap-1.5 text-amber-400 font-semibold">
-                      <ShieldAlert size={14} />
-                      <span>Authorization Gate Triggered</span>
+                  <div className="mt-3 pt-3 border-t border-amber-500/20 space-y-2">
+                    <div className="flex items-center gap-1.5 text-amber-400 font-semibold text-[11px]">
+                      <ShieldAlert size={12} />
+                      <span>Authorization Required</span>
                     </div>
-                    <p className="text-[11px] text-slate-600 dark:text-slate-400">
-                      {msg.pendingActions.length > 1
-                        ? `${msg.pendingActions.length} tables have pending actions:`
-                        : 'Confirm the pending action below:'}
-                    </p>
 
                     {msg.pendingActions.map((action) => (
-                      <div key={action.targetTable} className="flex items-center justify-between gap-2 bg-slate-50 dark:bg-slate-900 rounded p-2">
-                        <span className="text-[11px] text-slate-700 dark:text-slate-300">
-                          <code>{action.targetTable}</code> — {action.confirmationType === 'orphans' ? 'orphan removal' : 'compaction'}
+                      <div key={action.targetTable} className="flex items-center justify-between gap-3">
+                        <span className="text-[11px] text-slate-600 dark:text-slate-400">
+                          <code className="font-mono text-slate-700 dark:text-slate-300">{action.targetTable}</code>
+                          {' '}— {action.confirmationType === 'orphans' ? 'orphan removal' : 'compaction'}
                         </span>
                         <button
                           onClick={() => executeAction(msg.id, action.targetTable, action.confirmationType)}
