@@ -1,4 +1,4 @@
-﻿# AGENTS.md — Self-Healing ETL Pipeline with a Maintenance Copilot
+# AGENTS.md — Self-Healing ETL Pipeline with a Maintenance Copilot
 
 > Structured reference for AI agents working in this repository.
 > Source: direct code inspection + README. No inferred justifications added.
@@ -357,6 +357,7 @@ The README states the demo requires "two independent Spark processes competing."
 | Per-domain hooks in `hooks/` own all server state — components do not call Axios directly | `frontend/src/hooks/` |
 | Jotai atoms for UI-local / cross-component state | `frontend/src/store/` |
 | Single-shell view switching, no React Router | `frontend/src/App.tsx` |
+| UI Layout uses a unified panel + divider approach (`divide-y` / `divide-x`) — avoid nested `rounded-xl` per-parameter boxes | `frontend/src/components/` |
 
 ---
 
