@@ -20,54 +20,57 @@ export default function MaintenanceHistoryPanel({ history }: MaintenanceHistoryP
   const pairs = pairMaintenanceEvents(history);
 
   return (
-    <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 p-6 rounded-xl">
-      <div className="flex items-center gap-2 text-slate-900 dark:text-white font-bold text-sm mb-1">
-        <Wrench size={16} className="text-indigo-500 dark:text-indigo-400" />
-        <span>Maintenance History</span>
+    <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
+      {/* Header */}
+      <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800">
+        <div className="flex items-center gap-2 text-slate-900 dark:text-white font-bold text-sm">
+          <Wrench size={15} className="text-indigo-500 dark:text-indigo-400" />
+          Maintenance History
+        </div>
+        <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
+          Before/after comparisons from real maintenance_before / maintenance_after events.
+        </p>
       </div>
-      <p className="text-[11px] text-slate-400 dark:text-slate-500 mb-4">
-        Before/after comparisons from real maintenance_before / maintenance_after events.
-      </p>
 
       {pairs.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 p-6 text-sm text-slate-500 dark:text-slate-400">
+        <div className="px-6 py-10 text-center text-sm text-slate-400 dark:text-slate-500">
           No maintenance runs recorded yet for this table.
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="divide-y divide-slate-100 dark:divide-slate-800">
           {pairs.map((pair) => {
             const deltas = computeDeltas(pair);
             return (
-              <div
-                key={pair.id}
-                className="rounded-xl border border-slate-200 dark:border-slate-800 p-4 space-y-3"
-              >
-                <div className="flex items-center gap-1.5 text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-widest">
-                  <Clock size={12} />
+              <div key={pair.id} className="px-6 py-4">
+                {/* Timestamp row */}
+                <div className="flex items-center gap-1.5 text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-3">
+                  <Clock size={11} />
                   {formatTimestamp(pair.before.checked_at)}
-                  <ArrowRight size={12} />
+                  <ArrowRight size={11} />
                   {formatTimestamp(pair.after.checked_at)}
                 </div>
 
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {/* Delta values — inline, no sub-cards */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-2">
                   {deltas.map((delta) => (
-                    <div key={delta.label} className="rounded-lg bg-slate-50 dark:bg-[#0b0f17] p-2.5">
-                      <p className="text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-wide">
+                    <div key={delta.label} className="flex flex-col">
+                      <span className="text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-wide">
                         {delta.label}
-                      </p>
-                      <p className="text-xs font-bold text-slate-900 dark:text-white">
-                        {delta.before ?? '--'} <ArrowRight size={10} className="inline mx-0.5" />{' '}
-                        {delta.after ?? '--'}
-                      </p>
+                      </span>
+                      <span className="text-xs font-bold text-slate-900 dark:text-white mt-0.5">
+                        {delta.before ?? '—'}
+                        <ArrowRight size={9} className="inline mx-1 opacity-50" />
+                        {delta.after ?? '—'}
+                      </span>
                       {delta.change !== null && delta.change !== 0 && (
-                        <p
+                        <span
                           className={`text-[10px] font-semibold ${
                             delta.change < 0 ? 'text-emerald-500' : 'text-amber-500'
                           }`}
                         >
                           {delta.change > 0 ? '+' : ''}
                           {delta.change}
-                        </p>
+                        </span>
                       )}
                     </div>
                   ))}

@@ -63,58 +63,34 @@ export default function OCCControl({ onExplainError }: OCCControlProps) {
     };
   }, [conflicts, occHistory.data?.count]);
 
+  const statItems = [
+    { label: 'Recorded Attempts', value: metrics.total, color: '' },
+    { label: 'Successful Commits', value: metrics.committed, color: 'text-emerald-500 dark:text-emerald-400' },
+    { label: 'Detected Conflicts', value: metrics.failed, color: 'text-amber-500 dark:text-amber-400' },
+    { label: 'Conflict Rate', value: `${metrics.conflictRate}%`, color: '' },
+    { label: 'Writers Observed', value: metrics.uniqueWriters, color: '' },
+  ];
+
   return (
-    <div className="space-y-6">
-      {/* Top Metrics */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 p-5 rounded-xl">
-          <span className="text-[10px] font-bold tracking-widest text-slate-500 uppercase block mb-1">
-            Recorded Attempts
-          </span>
-          <span className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
-            {occHistory.isLoading ? '...' : metrics.total}
-          </span>
-        </div>
-
-        <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 p-5 rounded-xl">
-          <span className="text-[10px] font-bold tracking-widest text-slate-500 uppercase block mb-1">
-            Successful Commits
-          </span>
-          <span className="text-2xl font-black text-emerald-500 dark:text-emerald-400 tracking-tight">
-            {occHistory.isLoading ? '...' : metrics.committed}
-          </span>
-        </div>
-
-        <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 p-5 rounded-xl">
-          <span className="text-[10px] font-bold tracking-widest text-slate-500 uppercase block mb-1">
-            Detected Conflicts
-          </span>
-          <span className="text-2xl font-black text-amber-500 dark:text-amber-400 tracking-tight">
-            {occHistory.isLoading ? '...' : metrics.failed}
-          </span>
-        </div>
-
-        <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 p-5 rounded-xl">
-          <span className="text-[10px] font-bold tracking-widest text-slate-500 uppercase block mb-1">
-            Conflict Rate
-          </span>
-          <span className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
-            {occHistory.isLoading ? '...' : `${metrics.conflictRate}%`}
-          </span>
-        </div>
-
-        <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 p-5 rounded-xl">
-          <span className="text-[10px] font-bold tracking-widest text-slate-500 uppercase block mb-1">
-            Writers Observed
-          </span>
-          <span className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
-            {occHistory.isLoading ? '...' : metrics.uniqueWriters}
-          </span>
+    <div className="space-y-5">
+      {/* Unified stat strip */}
+      <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
+        <div className="grid grid-cols-2 md:grid-cols-5 divide-x divide-slate-100 dark:divide-slate-800">
+          {statItems.map(({ label, value, color }) => (
+            <div key={label} className="px-5 py-4 flex flex-col gap-0.5">
+              <span className="text-[10px] font-bold tracking-widest text-slate-400 uppercase">
+                {label}
+              </span>
+              <span className={`text-2xl font-black tracking-tight mt-0.5 ${color || 'text-slate-900 dark:text-white'}`}>
+                {occHistory.isLoading ? '—' : value}
+              </span>
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* Top Cards */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* Run card + Recent Signals */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         <OCCRunCard runOCC={runOCC} />
 
         <OCCRecentSignals
