@@ -43,3 +43,8 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 #groq api key configuration
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+# --- Medallion architecture namespaces (Iceberg, Hadoop catalog) ---
+BRONZE_NS = "bronze"
+SILVER_NS = "silver"
+GOLD_NS = "gold"

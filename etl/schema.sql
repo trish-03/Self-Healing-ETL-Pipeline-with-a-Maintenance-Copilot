@@ -55,10 +55,14 @@ CREATE TABLE IF NOT EXISTS raw.order_items (
     created_at TIMESTAMP
 );
 
+DROP TABLE IF EXISTS raw.pipeline_watermark;
+
 CREATE TABLE IF NOT EXISTS raw.pipeline_watermark (
-    source_name     TEXT PRIMARY KEY,   
+    source_name     TEXT NOT NULL,
+    stage           TEXT NOT NULL CHECK (stage IN ('bronze', 'silver', 'gold')),
     last_loaded_at  TIMESTAMP NOT NULL,
-    updated_at      TIMESTAMP NOT NULL DEFAULT now()
+    updated_at      TIMESTAMP NOT NULL DEFAULT now(),
+    PRIMARY KEY (source_name, stage)
 );
 
 CREATE TABLE IF NOT EXISTS raw.table_health_history (
