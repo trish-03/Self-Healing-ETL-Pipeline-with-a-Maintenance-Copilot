@@ -23,34 +23,45 @@ interface UseProactiveAlertsArgs {
  */
 export function useProactiveAlerts({ setMessages, setProactiveAlert }: UseProactiveAlertsArgs) {
   useEffect(() => {
-    const ws = new WebSocket(`${WS_BASE}/ws/alerts`);
+    let ws: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let isCancelled = false;
 
-    ws.onmessage = (event) => {
-      try {
-        const incomingAlert: ProactiveAlertPayload = JSON.parse(event.data);
+    const connect = () => {
+      ws = new WebSocket(`${WS_BASE}/ws/alerts`);
+
+      ws.onopen = () => {
+        console.info('App shell proactive alert stream connected.');
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const incomingAlert: ProactiveAlertPayload = JSON.parse(event.data);
+        
+        setMessages((prev) => {
+          const alreadyPresent = incomingAlert.alertId
+            ? prev.some((message) => message.alertId === incomingAlert.alertId)
+            : false;
+            
+          if (alreadyPresent) return prev;
+
+          return [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              alertId: incomingAlert.alertId,
+              sender: incomingAlert.sender || 'assistant',
+              text: incomingAlert.text || 'A background health issue was detected.',
+              timestamp: new Date(),
+              requiresConfirmation: incomingAlert.requiresConfirmation || false,
+              confirmationType: incomingAlert.confirmationType,
+              targetTable: incomingAlert.targetTable,
+              pendingActions: incomingAlert.pendingActions || [],
+            },
+          ];
+        });
+
         if (incomingAlert?.requiresConfirmation) {
-          setMessages((prev) => {
-            const alreadyPresent = incomingAlert.alertId
-              ? prev.some((message) => message.alertId === incomingAlert.alertId)
-              : prev.some((message) => message.text === incomingAlert.text && message.alertId === incomingAlert.alertId);
-            if (alreadyPresent) return prev;
-
-            return [
-              ...prev,
-              {
-                id: crypto.randomUUID(),
-                alertId: incomingAlert.alertId,
-                sender: incomingAlert.sender || 'assistant',
-                text: incomingAlert.text || 'A background health issue was detected.',
-                timestamp: new Date(),
-                requiresConfirmation: incomingAlert.requiresConfirmation || false,
-                confirmationType: incomingAlert.confirmationType,
-                targetTable: incomingAlert.targetTable,
-                pendingActions: incomingAlert.pendingActions || [],
-              },
-            ];
-          });
-
           setProactiveAlert({
             text: incomingAlert.text || 'A background health issue was detected.',
             targetTable: incomingAlert.targetTable,
@@ -59,15 +70,30 @@ export function useProactiveAlerts({ setMessages, setProactiveAlert }: UseProact
         }
       } catch (error) {
         console.error('Error unpacking proactive alert in app shell:', error);
-      }
+        }
+      };
+
+      ws.onerror = (error) => {
+        console.error('App shell proactive alert stream error:', error);
+      };
+
+      ws.onclose = () => {
+        if (isCancelled) {
+          return;
+        }
+
+        reconnectTimer = setTimeout(connect, 2000);
+      };
     };
 
-    ws.onerror = (error) => {
-      console.error('App shell proactive alert stream error:', error);
-    };
+    connect();
 
     return () => {
-      ws.close();
+      isCancelled = true;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+      }
+      ws?.close();
     };
   }, [setMessages, setProactiveAlert]);
 }

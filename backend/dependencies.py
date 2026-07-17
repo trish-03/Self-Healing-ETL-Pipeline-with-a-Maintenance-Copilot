@@ -132,14 +132,23 @@ async def check_table_health_job():
                 else:
                     detailed_text = f"{detailed_text}\n\n{_format_proactive_alert_text(table, metrics)}"
 
+                alert_id = str(uuid4())
+
                 chat_sessions[session_id].append({"sender": "user", "text": system_alert_directive})
                 chat_sessions[session_id].append({
                     "sender": agent_response.get("sender", "assistant"),
-                    "text": detailed_text
+                    "text": detailed_text,
+                    "requiresConfirmation": True,
+                    "confirmationType": "optimize",
+                    "targetTable": table,
+                    "pendingActions": [
+                        {"confirmationType": "optimize", "targetTable": table}
+                    ],
+                    "alertId": alert_id
                 })
 
                 broadcast_payload = {
-                    "alertId": str(uuid4()),
+                    "alertId": alert_id,
                     "sender": "assistant",
                     "text": detailed_text,
                     "requiresConfirmation": True,
@@ -172,7 +181,7 @@ async def lifespan(app: FastAPI):
     await start_mcp_session()
 
     print("Starting APScheduler Autonomous Monitoring Framework...")
-    scheduler.add_job(check_table_health_job, 'interval', seconds=300, id='iceberg_health_check')
+    scheduler.add_job(check_table_health_job, 'interval', seconds=100, id='iceberg_health_check')
     scheduler.start()
 
     yield

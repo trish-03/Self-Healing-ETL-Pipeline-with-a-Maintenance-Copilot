@@ -30,7 +30,8 @@ async def websocket_alerts_endpoint(websocket: WebSocket):
                     "requiresConfirmation": msg.get("requiresConfirmation", False),
                     "confirmationType": msg.get("confirmationType"),
                     "targetTable": msg.get("targetTable"),
-                    "pendingActions": msg.get("pendingActions", [])
+                    "pendingActions": msg.get("pendingActions", []),
+                    "alertId": msg.get("alertId")
                 })
 
         while True:
