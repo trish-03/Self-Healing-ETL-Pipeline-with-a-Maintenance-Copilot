@@ -35,7 +35,7 @@ export interface OCCRunResponse {
   conflicts: OCCConflictRecord[];
 }
 
-export function useOCCConflictHistory(limit: number = 20) {
+export function useOCCConflictHistory(limit: number = 5) {
   return useQuery<OCCConflictHistoryResponse>({
     queryKey: ['occConflictHistory', limit],
     queryFn: async () => {

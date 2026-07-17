@@ -5,12 +5,16 @@ interface Props {
   isOpen: boolean;
   onClose: () => void;
   activeTable: string;
+  pendingPrompt: string | null;
+  clearPendingPrompt: () => void;
 }
 
 export default function CopilotDrawer({
   isOpen,
   onClose,
   activeTable,
+  pendingPrompt,
+  clearPendingPrompt,
 }: Props) {
   return (
     <div
@@ -18,6 +22,7 @@ export default function CopilotDrawer({
         isOpen ? "translate-x-0" : "translate-x-full"
       }`}
     >
+      {/* Header Container */}
       <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-white/80 dark:bg-[#111827]/80 shrink-0">
         <div className="flex items-center gap-2">
           <Bot size={18} className="text-[#226b4d]" />
@@ -34,8 +39,13 @@ export default function CopilotDrawer({
         </button>
       </div>
 
+      {/* Chat Viewport Container */}
       <div className="flex-1 min-h-0">
-        <CopilotChat tableName={activeTable} />
+        <CopilotChat 
+          tableName={activeTable} 
+          pendingPrompt={pendingPrompt}
+          clearPendingPrompt={clearPendingPrompt}
+        />
       </div>
     </div>
   );

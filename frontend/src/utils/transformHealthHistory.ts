@@ -4,26 +4,26 @@ export interface ChartPoint {
   batch: string;
   live_files: number;
   snapshot_count: number;
+  event_type: string;
 }
 
 /**
  * Converts raw health-check history rows into chart-ready points.
- * Filtered to plain health_check events (excludes maintenance
- * before/after pairs) so the trend line reflects organic growth,
- * not sawtooth artifacts from compaction runs.
+ * Includes maintenance before/after rows so the trend line shows
+ * real compaction drops instead of hiding them.
  */
 export function transformHealthHistory(history: HealthHistoryEntry[] | undefined): ChartPoint[] {
   return (history ?? [])
-    .filter((h) => h.event_type === 'health_check')
     .slice(-90)
     .map((h) => ({
-      batch: new Date(h.checked_at).toLocaleString(undefined, {
+      batch: `${new Date(h.checked_at).toLocaleString(undefined, {
         month: 'short',
         day: 'numeric',
         hour: '2-digit',
         minute: '2-digit',
-      }),
+      })} · ${h.event_type.replace('_', ' ')}`,
       live_files: h.live_file_count ?? 0,
       snapshot_count: h.snapshot_count ?? 0,
+      event_type: h.event_type,
     }));
 }

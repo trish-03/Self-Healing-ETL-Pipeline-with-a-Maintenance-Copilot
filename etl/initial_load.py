@@ -6,6 +6,7 @@ from connection.db_connection import get_connection
 
 # connection package — get_spark returns a configured SparkSession
 from connection.spark_session import get_spark
+from maintenance.health_metrics import get_table_health
 
 # config package — holds JDBC_URL, JDBC_PROPS, and path/catalog constants
 from config.config import JDBC_URL, JDBC_PROPS, CATALOG_NAME, SPARK_PACKAGES
@@ -73,6 +74,12 @@ print(f"   dim_product      : {dim_product.count()} rows")
 print(f"   dim_date         : {dim_date.count()} rows")
 print(f"   fact_orders      : {orders.count()} rows")
 print(f"   fact_order_items : {order_items.count()} rows")
+
+for table_name in ("fact_orders", "fact_order_items"):
+    try:
+        get_table_health(spark, table_name, record_history=True)
+    except Exception as e:
+        print(f"[WARN] Failed to record health snapshot for {table_name}: {e}")
 
 spark.stop()
 

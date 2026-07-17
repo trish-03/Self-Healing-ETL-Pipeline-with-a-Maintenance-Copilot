@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { useAtom } from 'jotai';
 import { MessageSquare} from 'lucide-react';
@@ -9,6 +9,7 @@ import { MessageSquare} from 'lucide-react';
  import { useTableHealthHistory } from './hooks/useTableHealth';
 import { transformHealthHistory } from './utils/transformHealthHistory';
 import { useProactiveAlerts } from './hooks/useProactiveAlerts';
+import type { OCCConflictRecord } from './hooks/useOCC';
 
 import CopilotChat from './components/chat/copilotChat';
 import SimulationControl from './components/simulation/SimulationControl';
@@ -28,6 +29,7 @@ const queryClient = new QueryClient();
 function DashboardContent() {
   const [currentView, setCurrentView] = useState<'dashboard' | 'metrics' | 'simulation' | 'occ' | 'full_chat'>('dashboard');
   const [isCopilotOpen, setIsCopilotOpen] = useState(false);
+  const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
   const [proactiveAlert, setProactiveAlert] = useState<{ text: string; targetTable?: string; alertId?: string } | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [theme, setTheme] = useAtom(themeAtom);
@@ -36,12 +38,61 @@ function DashboardContent() {
   const { data: health, isLoading } = useTableHealth(activeTable);
   const { data: healthHistory } = useTableHealthHistory(activeTable);
   const queryClient = useQueryClient();
+  
+  const clearPendingPrompt = useCallback(() => {
+  setPendingPrompt(null);
+}, []);
 
-  const handleRefresh = () => {
-    queryClient.invalidateQueries({ queryKey: ['tableHealth', activeTable] });
-    queryClient.invalidateQueries({ queryKey: ['tableHealthHistory', activeTable] });
+  const handleRefresh = async () => {
+    await Promise.all([
+      queryClient.refetchQueries({
+        queryKey: ['tableHealth', activeTable],
+        type: 'active',
+      }),
+      queryClient.refetchQueries({
+        queryKey: ['tableHealthHistory', activeTable],
+        type: 'active',
+      }),
+    ]);
   };
 
+  const handleExplainOCC = (record: OCCConflictRecord) => {
+  const technicalSummary =
+    record.error_message
+      ?.split("\n")
+      .slice(0, 10)
+      .join("\n") ?? "No technical details available.";
+
+  const prompt = `
+Explain this Apache Iceberg Optimistic Concurrency Control (OCC) conflict.
+
+Summary
+
+Writer: ${record.writer_id}
+Outcome: ${record.outcome}
+Failure Type: ${record.error_type ?? "Unknown"}
+
+The user-facing message is:
+
+Concurrent write detected.
+
+Another transaction committed changes before this writer could commit.
+
+Apache Iceberg rejected this commit to maintain table consistency.
+
+Please explain:
+
+1. Why this commit failed.
+2. Why Apache Iceberg rejected the commit.
+3. What Optimistic Concurrency Control protected against.
+4. Whether this behavior is expected.
+5. Recommended next steps for the user.
+
+`;
+
+  setPendingPrompt(prompt.trim());
+  setIsCopilotOpen(true);
+};
   // Apply/remove the 'dark' class on the root element whenever theme changes,
   // so Tailwind's dark: variants activate throughout the whole tree.
   useEffect(() => {
@@ -105,12 +156,16 @@ function DashboardContent() {
           )}
 
           {currentView === 'metrics' && (
-            <StorageAnalytics activeTable={activeTable} health={health} />
+            <StorageAnalytics activeTable={activeTable} health={health} history={healthHistory?.history} />
           )}
 
           {currentView === 'simulation' && <SimulationControl />}
 
-          {currentView === 'occ' && <OCCControl />}
+          {currentView === 'occ' && (
+              <OCCControl
+                onExplainError={handleExplainOCC}
+              />
+            )}
 
           {currentView === 'full_chat' && (
             <div className="w-full h-full min-h-[500px] border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xl bg-white dark:bg-[#111827]">
@@ -119,7 +174,11 @@ function DashboardContent() {
                 <span className="text-xs font-bold text-slate-900 dark:text-white tracking-wide">Standalone Engineering Console</span>
               </div>
               <div className="h-[calc(100%-40px)]">
-                <CopilotChat tableName={activeTable} />
+                <CopilotChat
+                  tableName={activeTable}
+                  pendingPrompt={pendingPrompt}
+                  clearPendingPrompt={clearPendingPrompt}
+                />
               </div>
             </div>
           )}
@@ -127,11 +186,13 @@ function DashboardContent() {
       </main>
 
       {/* 3. SLIDING DRAWER CONTROL SIDEBAR */}
-      <CopilotDrawer
-        isOpen={isCopilotOpen}
-        onClose={() => setIsCopilotOpen(false)}
-        activeTable={activeTable}
-      />
+        <CopilotDrawer
+          isOpen={isCopilotOpen}
+          onClose={() => setIsCopilotOpen(false)}
+          activeTable={activeTable}
+          pendingPrompt={pendingPrompt}
+          clearPendingPrompt={clearPendingPrompt}
+        />
     </div>
   );
 }

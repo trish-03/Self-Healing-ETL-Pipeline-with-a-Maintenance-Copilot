@@ -26,7 +26,12 @@ def execute_table_maintenance(payload: MaintenanceRequest, spark=Depends(get_spa
     full_table_name = f"{CATALOG_NAME}.warehouse.{payload.table_name}"
 
     try:
-        before_raw = get_table_health(spark, payload.table_name, event_type="maintenance_before")
+        before_raw = get_table_health(
+            spark,
+            payload.table_name,
+            event_type="maintenance_before",
+            record_history=True,
+        )
         before_metrics = _to_health_metrics(before_raw)
         fragmented = _is_fragmented(before_metrics)
 
@@ -34,7 +39,12 @@ def execute_table_maintenance(payload: MaintenanceRequest, spark=Depends(get_spa
         deletes_rewritten_count = compact_delete_files(spark, full_table_name)
         deleted_count = expire_snapshots(spark, full_table_name)
 
-        after_raw = get_table_health(spark, payload.table_name, event_type="maintenance_after")
+        after_raw = get_table_health(
+            spark,
+            payload.table_name,
+            event_type="maintenance_after",
+            record_history=True,
+        )
         after_metrics = _to_health_metrics(after_raw)
 
         return MaintenanceResponse(
