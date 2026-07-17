@@ -15,7 +15,7 @@ The business scenario is a data engineering team that needs to keep a retail-sty
 
 ## Architecture
 
-![System Architecture](assests/architecture.png)
+<img src="assests/architecture.png" alt="System Architecture" width="800" />
 
 **Fig 1**: System Architectural Diagram
 
@@ -115,7 +115,11 @@ Frontend:
 
 ## Data Model
 
-This project has two distinct data layers: an **operational source layer** in Postgres (`raw` schema) and an **analytical lakehouse layer** in Apache Iceberg. The ETL pipeline moves data from the former into the latter.
+This project has two distinct data layers: an **operational source layer** in Postgres (`raw` schema) and an **analytical lakehouse layer** in Apache Iceberg. The ETL pipeline moves data from the former into the latter. The diagram is as below:
+
+<img src="assests/ER.png" alt="System Architecture" width="600" />
+
+**Fig 2**: Data Model Diagram
 
 ### Dimensions
 
@@ -162,9 +166,7 @@ This project has two distinct data layers: an **operational source layer** in Po
 | `fact_orders` | `raw.orders` | Merge-on-Read table with metadata cleanup enabled. Month partitioning by `created_at` exists in code but is currently commented out, making the table unpartitioned. |
 | `fact_order_items` | `raw.order_items` | Merge-on-Read table with metadata cleanup enabled. No partitioning defined. |
 
-> **Surrogate Keys**
->
-> Surrogate keys are assigned only to dimension tables and are generated once during `initial_load.py`. This is safe because the script is executed exactly once against a clean warehouse. Fact tables retain their natural keys from the Postgres source.
+
 ### Iceberg Metadata Reference
 
 Apache Iceberg tracks table state through a layered metadata structure, separate from the actual data. Understanding this layering is necessary to read the health metrics and before/after maintenance numbers used throughout this project.
@@ -278,7 +280,7 @@ From the notebook, the Iceberg snapshot summary showed the commit actually rewro
 |2026-07-01 06:36:41.55 |overwrite|2          |
 ```
 
-The same snapshot history also exposed Iceberg’s commit-level metadata:
+The same snapshot history also exposed Iceberg's commit-level metadata:
 
 ```text
 |manifests-created -> 2|
@@ -291,17 +293,27 @@ The same snapshot history also exposed Iceberg’s commit-level metadata:
 |write.merge.mode -> merge-on-read|
 ```
 
-The `fact_orders.manifests` table returned a manifest count of 6 in the notebook run, which is the clearest proof that the table had accumulated multiple manifest entries over time.
-
 ### Before / after storage evidence
+
+Before maintenance:
+
+<img src="assests/before.png" alt="System Architecture" width="900" />
+
+**Fig 3**: Before maintenance of fact order table.
 
 The warehouse scan showed a fragmented physical layout before cleanup:
 
 ```text
 Scanning: D:\tmp\warehouse\warehouse\fact_orders\data
-Total physical parquet files on disk: 41
-Total size: 1259.6 KB
+Total physical parquet files on disk: 245
+Total size: 3.85 KB
 ```
+
+After maintenance:
+
+<img src="assests/after.png" alt="System Architecture" width="900" />
+
+**Fig 4**: After maintenance of fact order table
 
 After a later maintenance pass, the Iceberg table state showed a single live data file and a long tail of delete files still present in the warehouse:
 
@@ -405,11 +417,11 @@ Sample user questions:
 **Where did you have to override, correct, or sanity-check something the AI assistant generated?**
 
 - The clearest example was the `_safe_metric()` swallow bug: maintenance runs were succeeding in Spark but writing zero rows to `table_health_history`, because a `CHECK` constraint mismatch (`"before_maintenance"` vs. the schema's `"maintenance_before"`) was being silently caught by the same try/except designed to let one failed metric not abort the whole report. Nothing in the surface-level logs pointed at it — I only found it by comparing expected job runs against actual row counts.
-- I also had to correct an early assumption around partition pruning, where a first pass read as if `fact_orders` were partitioned when the transform was actually commented out — I only trusted that story once I'd confirmed it against the literal line in `initial_load.py`.
-- After the medallion refactor (introducing genuine `bronze`/`silver`/`gold` namespaces), I had to sanity-check every module that referenced the old flat `warehouse.` prefix — some maintenance and health-metric code still had it hardcoded, producing malformed paths like `local.warehouse.bronze.orders` until corrected.
+- A clear prompt was added to the chatbot so it doesnt start to hallucinate, by defining available tools, tables, failure handling and more.
 
 **If a stakeholder asked "can I trust this number?", what would you point to?**
 
+The stakeholder can trust the number, since the AI doesn't hallucinate but instead reads the factual data from the function itself. Some of them are:
 - `raw.table_health_history` — the opt-in, scheduler-logged history of health snapshots, not ad hoc reads.
 - `raw.occ_conflict_log` — the per-writer OCC outcomes logged directly from inside each writer process.
 - Iceberg's own snapshot summaries and metadata tables (`{table}.files`, `{table}.manifests`, `{table}.snapshots`) — the ground truth the health metrics are computed from.
@@ -424,8 +436,9 @@ Sample user questions:
 
 **What is the biggest risk if the pipeline silently broke for a week, and would the system catch it?**
 
-- The biggest risk is serving stale order or inventory state while every downstream consumer assumes the data is current — the dashboard could look "healthy" purely because nothing is actively erroring, not because data is actually flowing.
-- The scheduler and history tables would catch fragmentation or maintenance-related degradation, since those checks run independent of whether new data is arriving. But a pure source-ingestion failure — the upstream Postgres feed simply stopping — could still be missed, since the health-check path itself would remain up and reporting on whatever data already exists, without a build-in check for "no new watermark advancement" as its own kind of alert.
+- The biggest risk is that the data would stop updating without anyone noticing. Users would continue using dashboards and reports, believing the data is current when it is actually a week old.
+
+- The system would still detect maintenance-related problems, such as fragmented tables or too many small files, because those health checks run automatically. However, if the data simply stopped arriving from Postgres, the current system would not detect it. The health checks only monitor the condition of the Iceberg tables, not whether new data is still being loaded. Adding an alert for when the pipeline watermark has not advanced for a certain period would allow the system to catch this type of failure.
 
 ## Notes
 
