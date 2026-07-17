@@ -25,15 +25,6 @@ Postgres raw schema
     -> MCP subprocess (agent_tools.py, stdio) <-> Groq-hosted agent (agent.py)
     -> React dashboard / Copilot drawer
 ```
-### Layer 0: Initial Data Generation
-
-Before any loader runs, the `raw` schema needs historical data to load. `data/faker_generator.py` populates it in a fixed sequence: customers -> products -> `dim_date` -> orders -> order items, since orders and items have foreign-key dependencies on the tables generated before them.
-
-- **Volume**: 500 customers, 100 products, a full `dim_date` range (`2023-01-01` to `2024-12-31`), 10,000 orders with 1-4 line items each.
-- **Order status is date-aware, not random**: orders older than 21 days before the dataset's end date (`DATE_END`) are treated as resolved - 90% delivered, 10% returned, with `updated_at` set to a realistic shipping delay (2-10 days, plus extra days for returns) after `created_at`. Orders within the last 21 days are left "in motion" (pending/confirmed/shipped, `updated_at == created_at`), so the dataset ends with a believable mix of closed and active orders rather than everything resolved or everything pending.
-- **Idempotency**: every insert uses `ON CONFLICT DO NOTHING`, so re-running the generator against a partially-populated schema doesn't fail or duplicate rows.
-
-This step runs once, before `etl/init_schema.py` (creates the schema) and `etl/initial_load.py` (loads Postgres -> Iceberg). See Setup & Run Instructions for the exact order.
 
 ### Layer 1: Postgres (`raw` schema, OLTP)
 
@@ -64,6 +55,16 @@ Source of truth for all operational data. Three loader scripts move data out of 
 
 Five views (Dashboard, Storage Analytics, Simulation, OCC Demo, Dedicated Work Chat), backed by domain-specific data hooks and a WebSocket connection for proactive alerts, all talking to the FastAPI layer above.
 
+## How Initial Data Is Generated
+
+Before any loader runs, the `raw` schema needs historical data to load. `data/faker_generator.py` populates it in a fixed sequence: customers -> products -> `dim_date` -> orders -> order items, since orders and items have foreign-key dependencies on the tables generated before them.
+
+- **Volume**: 500 customers, 100 products, a full `dim_date` range (`2023-01-01` to `2024-12-31`), 10,000 orders with 1-4 line items each.
+- **Order status is date-aware, not random**: orders older than 21 days before the dataset's end date (`DATE_END`) are treated as resolved - 90% delivered, 10% returned, with `updated_at` set to a realistic shipping delay (2-10 days, plus extra days for returns) after `created_at`. Orders within the last 21 days are left "in motion" (pending/confirmed/shipped, `updated_at == created_at`), so the dataset ends with a believable mix of closed and active orders rather than everything resolved or everything pending.
+- **Idempotency**: every insert uses `ON CONFLICT DO NOTHING`, so re-running the generator against a partially-populated schema doesn't fail or duplicate rows.
+
+This step runs once, before `etl/init_schema.py` (creates the schema) and `etl/initial_load.py` (loads Postgres -> Iceberg). See Setup & Run Instructions for the exact order.
+
 ## How data changes over time
 
 The system models two different kinds of change, and the pipeline treats them differently:
@@ -80,7 +81,6 @@ Not every read of a table's health produces a logged row - logging is opt-in (`r
 
 - **Logged automatically**: the scheduled background check (`check_table_health_job`, every 300s), every post-merge check inside `initial_load.py` / `incremental_load.py`, and every before/after snapshot taken during `run_maintenance()` or orphan removal.
 - **Not logged**: ad hoc reads, such as a user opening the dashboard or the agent calling `check_lakehouse_health` mid-conversation - these query live metrics without writing to `table_health_history`.
-- **Skipped even when requested**: if every core metric (`live_file_count`, `average_file_size_bytes`, `snapshot_count`) fails to collect, the row is dropped rather than inserted, since an all-null row carries no information and would only pollute the chart.
 - **Fragmentation verdicts** (`HEALTHY` / `FRAGMENTED` / `UNKNOWN`) use one shared threshold check (`_is_fragmented`) reused identically by the standalone script and the API - a table is never called fragmented on partially-failed metrics; `_collection_failed` must be checked first, or the result is `UNKNOWN`.
 
 ## Tech Stack
@@ -112,45 +112,56 @@ Frontend:
 
 ## Data Model
 
-Image in process
+This project has two distinct data layers: an **operational source layer** in Postgres (`raw` schema) and an **analytical lakehouse layer** in Apache Iceberg. The ETL pipeline moves data from the former into the latter.
 
-This project has two distinct data layers: an **operational source layer** in Postgres (`raw` schema) and an **analytical lakehouse layer** in Apache Iceberg (`warehouse` namespace, Hadoop catalog). The ETL pipeline moves data from the former into the latter.
+### Dimensions
 
-### Operational source tables (Postgres, schema `raw`)
+| Table | Primary Key | Description | Main Attributes |
+|------|-------------|-------------|-----------------|
+| `customers` | `customer_id` | Customer master data | name, email, address, city, tier, phone |
+| `products` | `sku_code` | Product master data | name, category, sub_category, selling_price, is_active |
+| `dim_date` | `date_id` | Calendar dimension | full_date, year, month, month_name, day, day_name, week, quarter, is_weekend |
 
-- `customers` - customer master data
-- `products` - product master data
-- `dim_date` - calendar dimension
-- `orders` - order header, mutable (status progresses pending -> confirmed -> shipped -> delivered -> returned)
-- `order_items` - order line items, immutable once created
-- `fact_inventory` - warehouse inventory quantities, used by the simulation and OCC demo
-- `pipeline_watermark` - incremental load checkpoint (`last_loaded_at` per source, replaces the earlier flat-file watermark approach)
-- `table_health_history` - health snapshots captured by the maintenance loop (opt-in logging, not every read - see Architecture for what triggers a write)
-- `occ_conflict_log` - per-writer outcomes from the OCC concurrency demo
+### Facts
 
-### Lakehouse tables (Iceberg, catalog `local`, namespace `warehouse`)
+| Table | Primary Key | Description | Main Attributes |
+|------|-------------|-------------|-----------------|
+| `orders` | `order_id` | Order header (mutable) | customer_id, sku_code, date_id, quantity, total_amount, status, created_at, updated_at |
+| `order_items` | `item_id` | Order line items (immutable) | order_id, sku_code, quantity, unit_price, discount, line_total, created_at |
+| `fact_inventory` | `inventory_id` | Warehouse inventory used for the OCC demo | sku_code, warehouse_id, quantity, updated_at |
 
-- `dim_customer`, `dim_product`, `dim_date` - dimension tables with surrogate keys (`customer_sk`, `product_sk`, `date_sk`) generated once during initial load
-- `fact_orders` - Merge-on-Read, updated on every incremental batch (status/timestamp changes trigger `MERGE ... WHEN MATCHED`)
-- `fact_order_items` - Merge-on-Read, insert-only (no matched-update branch, since items are immutable)
-- `fact_inventory` - Merge-on-Read, dedicated to the OCC demo; decrement-style conflicts on `quantity` keyed by `item_id`
+### Pipeline / Operational Support Tables
+
+| Table | Primary Key | Description |
+|------|-------------|-------------|
+| `pipeline_watermark` | `source_name` | Stores incremental load checkpoints (`last_loaded_at`, `updated_at`) |
+| `table_health_history` | - | Stores health snapshots captured by the maintenance loop, including storage metrics, metadata metrics, orphan file counts, and maintenance event types |
+| `occ_conflict_log` | - | Stores the outcome of each writer in the OCC concurrency demo, including error type and error message |
 
 ### Relationships
 
-- `orders.customer_id -> customers.customer_id`
-- `orders.sku_code -> products.sku_code`
-- `orders.date_id -> dim_date.date_id`
-- `order_items.order_id -> orders.order_id`
-- `order_items.sku_code -> products.sku_code`
-- Iceberg dimension surrogate keys (`customer_sk`, `product_sk`, `date_sk`) map 1:1 to their Postgres natural-key counterparts; fact tables in Iceberg mirror the same relationships via natural keys, not surrogate keys.
+| Parent Table | Child Table | Relationship |
+|--------------|-------------|--------------|
+| `customers.customer_id` | `orders.customer_id` | One customer can place many orders |
+| `products.sku_code` | `orders.sku_code` | One product can appear in many orders |
+| `dim_date.date_id` | `orders.date_id` | One date can have many orders |
+| `orders.order_id` | `order_items.order_id` | One order contains many order items |
+| `products.sku_code` | `order_items.sku_code` | One product can appear in many order items |
 
-### Iceberg / maintenance facts
+### Apache Iceberg Lakehouse Tables
+*(Catalog: `local`, Namespace: `warehouse`)*
 
-- `fact_orders` and `fact_order_items` are the two Iceberg tables the maintenance copilot watches most closely; `fact_inventory` is monitored separately as the OCC demo target.
-- The health layer records live file count, physical file count, delete-file count, snapshot count, manifest count, metadata JSON count, orphan file count, and partition distribution.
-- `fact_orders` (Copy-on-Write-style frequent MERGE) and `fact_order_items` (pure inserts) exhibit different degradation patterns - write amplification vs. small-file accumulation - and are diagnosed accordingly.
-- OCC history is tracked separately (`occ_conflict_log`) so the frontend can explain concurrency failures using real recorded outcomes rather than a hypothetical example.
+| Table | Source | Notes |
+|------|--------|-------|
+| `dim_customer` | `raw.customers` | Adds surrogate key `customer_sk` using `monotonically_increasing_id()` and is written once with `createOrReplace()` |
+| `dim_product` | `raw.products` | Adds surrogate key `product_sk` |
+| `dim_date` | `raw.dim_date` | Adds surrogate key `date_sk` |
+| `fact_orders` | `raw.orders` | Merge-on-Read table with metadata cleanup enabled. Month partitioning by `created_at` exists in code but is currently commented out, making the table unpartitioned. |
+| `fact_order_items` | `raw.order_items` | Merge-on-Read table with metadata cleanup enabled. No partitioning defined. |
 
+> **Surrogate Keys**
+>
+> Surrogate keys are assigned only to dimension tables and are generated once during `initial_load.py`. This is safe because the script is executed exactly once against a clean warehouse. Fact tables retain their natural keys from the Postgres source.
 ### Iceberg Metadata Reference
 
 Apache Iceberg tracks table state through a layered metadata structure, separate from the actual data. Understanding this layering is necessary to read the health metrics and before/after maintenance numbers used throughout this project.
@@ -337,6 +348,24 @@ Sample user questions:
 - “What should I do if delete files keep growing?”
 
 ## Challenges Attempted And What I Learned
+
+### Challenge: Simulate an OCC conflict and have the agent explain it in plain language
+
+- Implemented as two independent OS subprocesses (`occ_writer.py`), each opening its own `SparkSession`, synchronized through a file-based barrier in `/tmp/occ_barrier/` so both writers read the identical Iceberg snapshot before either attempts a `MERGE` against `fact_inventory`. This guarantees a genuine commit-time race rather than a scripted, fake "conflict."
+- Iceberg's own optimistic concurrency control decides the winner, not application code — exactly one writer's `MERGE` commits, the other fails on a concurrent-modification check. Each writer logs its own outcome directly to `raw.occ_conflict_log` via psycopg2, so the result is a real recorded fact, not a hypothetical.
+- The non-determinism was the hardest part to trust at first: sometimes writer 1 fails, sometimes writer 2 does, depending purely on which commit reaches the catalog first. Initially this looked like a bug. Confirming it was correct behavior (and not a race in my own harness) required rerunning the demo multiple times and checking that `occ_conflict_log` always showed exactly one winner and one loser per run.
+- The agent explains the conflict by reading back from `occ_conflict_log` and the tool output of `get_occ_history` — it is explicitly instructed not to invent a plausible-sounding explanation, so if the log is empty or stale, the agent's answer reflects that rather than fabricating a narrative.
+- I initially assumed OCC should be demonstrated on `fact_orders` as well, since it's also Merge-on-Read. I scoped it back to `fact_inventory` only, since that's the one table built specifically to give two writers a shared row to contend over without interfering with the order lifecycle simulation.
+
+### Challenge: Run health checks on a schedule and have the agent proactively flag problems
+
+- `APScheduler`'s `check_table_health_job` runs every 300 seconds against `fact_orders` and `fact_order_items`, independent of any user action or dashboard being open.
+- This is the one path allowed to write unconditionally to `table_health_history` — every other health read (dashboard opens, ad hoc agent questions) is intentionally *not* logged, because early on unconditional logging on every read saturated the trend chart with polling noise instead of showing meaningful history.
+- When the scheduler's plain threshold check (`_is_fragmented`) flags a table, it synchronously invokes the agent to turn that raw verdict into a grounded natural-language explanation, then pushes it to the frontend over WebSocket with `requiresConfirmation`, `confirmationType`, and `targetTable` fields — so the agent explains and contextualizes an alert that already fired, it doesn't decide on its own that something is wrong.
+- A real bug here taught me the most: `_safe_metric()` was silently swallowing a `CHECK` constraint mismatch (`"before_maintenance"` vs. the schema's expected `"maintenance_before"`), so maintenance runs were succeeding in Spark but producing zero rows in the history table. The failure was invisible until I compared row counts directly against expected job runs — nothing in the logs pointed at it, since the try/except around metric collection was doing exactly what it was designed to do for a different failure mode.
+- I also had to add an `asyncio.Lock` around the shared Spark session once the scheduler and manual actions (like the simulation runner) could overlap. Without it, concurrent Spark queries were occasionally failing collection mid-flight, and `get_table_health()`'s null-coercion was quietly turning that into a false "healthy" reading instead of surfacing the failure.
+
+### General lessons
 
 - The agent must be grounded in live tool output. If a tool returns stale or incomplete data, the answer becomes stale or incomplete too, so the prompts explicitly forbid inventing metrics.
 - The first assumption I had to correct was the partitioning story: `fact_orders` was intended to be partitioned by month in `etl/initial_load.py`, but the partition transform is currently commented out, so there is no verified partition-pruning win to claim in this build.
