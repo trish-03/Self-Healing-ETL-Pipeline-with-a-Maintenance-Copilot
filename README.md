@@ -15,16 +15,19 @@ The business scenario is a data engineering team that needs to keep a retail-sty
 
 ## Architecture
 
-Image in progress.
+![System Architecture](assests/architecture.png)
 
-```text
-Postgres raw schema
-    -> Spark JDBC ingest (initial_load.py / incremental_load.py / inventory_load.py)
-    -> Apache Iceberg warehouse (Hadoop catalog, local)
-    -> FastAPI backend (routers/)
-    -> MCP subprocess (agent_tools.py, stdio) <-> Groq-hosted agent (agent.py)
-    -> React dashboard / Copilot drawer
-```
+**Fig 1**: System Architectural Diagram
+
+### Layer 0: Initial Data Generation
+
+Before any loader runs, the `raw` schema needs historical data to load. `data/faker_generator.py` populates it in a fixed sequence: customers -> products -> `dim_date` -> orders -> order items, since orders and items have foreign-key dependencies on the tables generated before them.
+
+- **Volume**: 500 customers, 100 products, a full `dim_date` range (`2023-01-01` to `2024-12-31`), 10,000 orders with 1-4 line items each.
+- **Order status is date-aware, not random**: orders older than 21 days before the dataset's end date (`DATE_END`) are treated as resolved - 90% delivered, 10% returned, with `updated_at` set to a realistic shipping delay (2-10 days, plus extra days for returns) after `created_at`. Orders within the last 21 days are left "in motion" (pending/confirmed/shipped, `updated_at == created_at`), so the dataset ends with a believable mix of closed and active orders rather than everything resolved or everything pending.
+- **Idempotency**: every insert uses `ON CONFLICT DO NOTHING`, so re-running the generator against a partially-populated schema doesn't fail or duplicate rows.
+
+This step runs once, before `etl/init_schema.py` (creates the schema) and `etl/initial_load.py` (loads Postgres -> Iceberg). See Setup & Run Instructions for the exact order.
 
 ### Layer 1: Postgres (`raw` schema, OLTP)
 
