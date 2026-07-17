@@ -41,7 +41,11 @@ async def handle_copilot_chat(payload: ChatRequest):
         chat_sessions[payload.session_id].append({"sender": "user", "text": payload.message})
         chat_sessions[payload.session_id].append({
             "sender": response_data.get("sender", "assistant"),
-            "text": response_data.get("text", "")
+            "text": response_data.get("text", ""),
+            "requiresConfirmation": response_data.get("requiresConfirmation", False),
+            "confirmationType": response_data.get("confirmationType"),
+            "targetTable": response_data.get("targetTable"),
+            "pendingActions": response_data.get("pendingActions", [])
         })
 
         return response_data
