@@ -15,16 +15,19 @@ The business scenario is a data engineering team that needs to keep a retail-sty
 
 ## Architecture
 
-Image in progress.
+![System Architecture](assests/architecture.png)
 
-```text
-Postgres raw schema
-    -> Spark JDBC ingest (initial_load.py / incremental_load.py / inventory_load.py)
-    -> Apache Iceberg warehouse (Hadoop catalog, local)
-    -> FastAPI backend (routers/)
-    -> MCP subprocess (agent_tools.py, stdio) <-> Groq-hosted agent (agent.py)
-    -> React dashboard / Copilot drawer
-```
+**Fig 1**: System Architectural Diagram
+
+### Layer 0: Initial Data Generation
+
+Before any loader runs, the `raw` schema needs historical data to load. `data/faker_generator.py` populates it in a fixed sequence: customers -> products -> `dim_date` -> orders -> order items, since orders and items have foreign-key dependencies on the tables generated before them.
+
+- **Volume**: 500 customers, 100 products, a full `dim_date` range (`2023-01-01` to `2024-12-31`), 10,000 orders with 1-4 line items each.
+- **Order status is date-aware, not random**: orders older than 21 days before the dataset's end date (`DATE_END`) are treated as resolved - 90% delivered, 10% returned, with `updated_at` set to a realistic shipping delay (2-10 days, plus extra days for returns) after `created_at`. Orders within the last 21 days are left "in motion" (pending/confirmed/shipped, `updated_at == created_at`), so the dataset ends with a believable mix of closed and active orders rather than everything resolved or everything pending.
+- **Idempotency**: every insert uses `ON CONFLICT DO NOTHING`, so re-running the generator against a partially-populated schema doesn't fail or duplicate rows.
+
+This step runs once, before `etl/init_schema.py` (creates the schema) and `etl/initial_load.py` (loads Postgres -> Iceberg). See Setup & Run Instructions for the exact order.
 
 ### Layer 1: Postgres (`raw` schema, OLTP)
 
@@ -341,6 +344,7 @@ Use these prompts or actions during a demo:
 
 Sample user questions:
 
+- "What is this website about and what is the purpose of copilot here?"
 - “Why did the health check mark this table as fragmented?”
 - “What changed after compaction?”
 - “Explain the OCC conflict in plain English.”
@@ -368,7 +372,6 @@ Sample user questions:
 ### General lessons
 
 - The agent must be grounded in live tool output. If a tool returns stale or incomplete data, the answer becomes stale or incomplete too, so the prompts explicitly forbid inventing metrics.
-- The first assumption I had to correct was the partitioning story: `fact_orders` was intended to be partitioned by month in `etl/initial_load.py`, but the partition transform is currently commented out, so there is no verified partition-pruning win to claim in this build.
 - Merge-on-Read keeps delete files around even when data files have been compacted, so a low live-file count is not the same thing as a fully cleaned table.
 - The warehouse history tables are what make the demo trustworthy: `raw.table_health_history` and `raw.occ_conflict_log` let the frontend show real history instead of fabricated charts.
 
@@ -376,56 +379,53 @@ Sample user questions:
 
 ### 4.1 Data And Iceberg Understanding
 
-**What did the Metadata File, Manifest List, and Manifest File contain, and how was it verified?**
+**What specifically did the Metadata File, Manifest List, and Manifest File each contain, and how did you verify it yourself?**
 
-- The metadata file held table-level state: current schema, table properties, format version, snapshot pointer, and the current Iceberg catalog state. I verified this through the table properties and snapshot metadata shown in Spark, including `format-version`, `write.merge.mode`, and the current snapshot id.
-- The manifest list held the snapshot-level list of manifests for a commit, plus summary counters such as data files added, delete files added, and manifest replacement counts. I verified this through the snapshot summary output in the notebook, where the commit details included `manifests-created`, `manifests-replaced`, `added-data-files`, and `deleted-data-files`.
-- The manifest file held the file-level entries: actual data files and delete files referenced by the snapshot. I verified this by querying Iceberg metadata tables such as `fact_orders.files` and `fact_orders.manifests`, and by comparing live file counts with the physical parquet files in the warehouse.
+- The metadata.json held table-level state: current schema, partition spec, table properties, format version, and a pointer to the current snapshot's manifest list. I verified this directly in Spark by inspecting table properties (`format-version`, `write.merge.mode`, `current-snapshot-id`) rather than trusting a description of what it "should" contain.
+- The manifest list held the snapshot-level summary: which manifests make up that snapshot, plus commit counters. I verified this from actual snapshot summary output — `manifests-created`, `manifests-replaced`, `added-data-files`, `deleted-data-files` — captured in the notebook after real `MERGE` commits, not from documentation examples.
+- The manifest file held the file-level entries: the specific data files and delete files a snapshot references. I verified this by querying `{table}.files` and `{table}.manifests` directly and cross-checking the counts against the physical Parquet files actually present on disk in the warehouse directory — when the live count and physical count diverged, that gap was itself evidence the layering was real, not just described correctly in the code comments.
 
-**Where exactly did partition pruning save work, and what evidence was used?**
+**Where exactly did partition pruning save work, and what evidence did you actually look at?**
 
-- In this exact build, I do not have a verified partition-pruning win to claim. The source shows the intended month partition transform on `fact_orders`, but that line is currently commented out in `etl/initial_load.py`.
-- Because of that, I would not present pruning as a proven result here. The honest evidence is the code itself plus the absence of a scan plan showing a real partition filter benefit.
+- In the project, paritition has not been applied. Initially, a paritition by date for `fact_order` table was added, but it was later removed. The focus of the project is more on the metadata, maintenance and removing small file problem. So adding partition itself wouldn't add any value. But in case of analytical query, it would save a lot of time during searching for the required data, which could be seen through the explain plan.
 
-**What would go wrong if a schema change used rename instead of evolution?**
+**What would go wrong if a schema change used rename instead of evolution, and how does Field ID avoid it?**
 
-- A rename would break historical readers that still expect the old column identity, because Iceberg tracks field identity with field IDs, not just names.
-- If you renamed a column instead of evolving it carefully, older snapshots and downstream jobs could interpret the column as missing or as a different field entirely.
-- Field IDs avoid that pitfall by preserving the logical identity of the column across schema changes even when the human-readable name changes.
+- Iceberg tracks column identity internally by field ID, not by name. If a column were renamed by dropping the old name and adding a "new" one instead of using Iceberg's schema evolution API, older snapshots and any reader expecting the original field would see it as missing or as an entirely different column — the historical data wouldn't reconcile with the new schema.
+- Proper schema evolution (rename-in-place) preserves the same field ID across the change, so every snapshot — past and future — still resolves that column to the same logical field regardless of what it's currently called. That's what lets Iceberg time-travel and read old snapshots correctly even after schema changes; identity survives the rename because it was never tied to the name in the first place.
 
 ### 4.2 AI Agent And Engineering Understanding
 
-**Which parts of the MCP tool output does the agent actually rely on?**
+**Which parts of the MCP tool output does the agent actually rely on, and what happens if that data is bad or stale?**
 
-- It relies on the actual tool payload returned by the backend for health, maintenance, orphan removal, OCC demo, and OCC history.
-- The agent is explicitly instructed not to invent numbers. If the tool output is wrong, stale, or missing fields, the answer will reflect that bad input.
-- That means the trust boundary is the tool output, not the model’s prose.
+- The agent relies entirely on the JSON payload returned by each MCP tool call — health metrics, maintenance before/after snapshots, orphan counts, OCC results, OCC history — mediated through the HTTP loopback to FastAPI, not on anything it recalls from earlier in the conversation or infers on its own.
+- The system prompt explicitly forbids inventing numbers. If a tool returns stale, partial, or null data (e.g. a metric that failed collection via `_safe_metric()`), the agent's answer will faithfully reflect that gap — including an `UNKNOWN` fragmentation verdict rather than guessing — since `_is_fragmented` refuses to classify on partially-failed metrics.
+- Practically: the trust boundary in this system is the tool output, not the model's language. A wrong tool result produces a wrong (but at least honestly-derived) answer; the agent isn't a second, independent source of truth.
 
-**Where did I have to override, correct, or sanity-check something the AI assistant generated?**
+**Where did you have to override, correct, or sanity-check something the AI assistant generated?**
 
-- I had to sanity-check the partition-pruning story against the source code, because the first pass looked like the table was partitioned when it is not currently written that way.
-- I also checked the notebook outputs before writing any forensic claims so the README only includes values that were actually observed.
+- The clearest example was the `_safe_metric()` swallow bug: maintenance runs were succeeding in Spark but writing zero rows to `table_health_history`, because a `CHECK` constraint mismatch (`"before_maintenance"` vs. the schema's `"maintenance_before"`) was being silently caught by the same try/except designed to let one failed metric not abort the whole report. Nothing in the surface-level logs pointed at it — I only found it by comparing expected job runs against actual row counts.
+- I also had to correct an early assumption around partition pruning, where a first pass read as if `fact_orders` were partitioned when the transform was actually commented out — I only trusted that story once I'd confirmed it against the literal line in `initial_load.py`.
+- After the medallion refactor (introducing genuine `bronze`/`silver`/`gold` namespaces), I had to sanity-check every module that referenced the old flat `warehouse.` prefix — some maintenance and health-metric code still had it hardcoded, producing malformed paths like `local.warehouse.bronze.orders` until corrected.
 
-**If a stakeholder asked “can I trust this number?”, what would I point to?**
+**If a stakeholder asked "can I trust this number?", what would you point to?**
 
-- `raw.table_health_history`
-- `raw.occ_conflict_log`
-- Iceberg snapshot summaries and metadata tables
-- The maintenance before/after rows written by the backend
-
-Those sources are the audit trail for the dashboard and the copilot.
+- `raw.table_health_history` — the opt-in, scheduler-logged history of health snapshots, not ad hoc reads.
+- `raw.occ_conflict_log` — the per-writer OCC outcomes logged directly from inside each writer process.
+- Iceberg's own snapshot summaries and metadata tables (`{table}.files`, `{table}.manifests`, `{table}.snapshots`) — the ground truth the health metrics are computed from.
+- The before/after maintenance rows written by `run_maintenance()`, since those pair a concrete state change to a concrete before/after health read rather than a narrative claim.
 
 ### 4.3 Business Understanding
 
 **Who would actually use this, and what decision would they make differently?**
 
-- Data engineers, platform engineers, and on-call analytics owners would use it.
-- They would use it to decide whether to compact a table, clean orphan files, trust a health warning, or investigate an OCC failure before a downstream consumer complains.
+- Data engineers, platform engineers, and on-call analytics owners responsible for keeping a lakehouse performant without manually running Spark maintenance jobs.
+- They would use it to decide whether a table actually needs compaction versus being falsely flagged, whether to trust a fragmentation alert before escalating it, whether an OCC failure represents a real concurrency problem or an expected one-writer-wins outcome, and whether orphan files are safe to delete versus still mid-write.
 
 **What is the biggest risk if the pipeline silently broke for a week, and would the system catch it?**
 
-- The biggest risk is that the lakehouse could keep serving stale order or inventory state while everyone assumes the pipeline is healthy.
-- The scheduler and history tables help catch degradation, but a source-ingestion failure could still be missed if the health-check path itself remains up while upstream data stops changing.
+- The biggest risk is serving stale order or inventory state while every downstream consumer assumes the data is current — the dashboard could look "healthy" purely because nothing is actively erroring, not because data is actually flowing.
+- The scheduler and history tables would catch fragmentation or maintenance-related degradation, since those checks run independent of whether new data is arriving. But a pure source-ingestion failure — the upstream Postgres feed simply stopping — could still be missed, since the health-check path itself would remain up and reporting on whatever data already exists, without a build-in check for "no new watermark advancement" as its own kind of alert.
 
 ## Notes
 
