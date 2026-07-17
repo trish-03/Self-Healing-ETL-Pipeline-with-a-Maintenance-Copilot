@@ -1,4 +1,4 @@
-﻿# AGENTS.md — Self-Healing ETL Pipeline with a Maintenance Copilot
+# AGENTS.md — Self-Healing ETL Pipeline with a Maintenance Copilot
 
 > Structured reference for AI agents working in this repository.
 > Source: direct code inspection + README. No inferred justifications added.
